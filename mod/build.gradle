@@ -15,14 +15,12 @@ def withMca = (findProperty('withMca') ?: 'true').toBoolean()
 def withMinecolonies = (findProperty('withMinecolonies') ?: 'true').toBoolean()
 def withBluemap = (findProperty('withBluemap') ?: 'true').toBoolean()
 def withVoicechat = (findProperty('withVoicechat') ?: 'true').toBoolean()
-def withEnTranslator = (findProperty('withEnTranslator') ?: 'true').toBoolean()
+def withSipher = (findProperty('withSipher') ?: 'true').toBoolean()
 
-// Where the dev runs find the AI runtime (llama-server, voice-server, models). Assemble it with scripts/fetch-runtime.sh.
+// Where the dev runs keep the AI runtime (programs + models): download it from the dashboard's Models page.
 def runtimeDir = rootProject.file('runtime').absolutePath
-def voiceServerJar = project(':voice-server').layout.buildDirectory.file('libs/voice-server.jar').get().asFile.absolutePath
-// EN Translator Core 1.0.21's Linux client ships its sherpa JNI library without the onnxruntime 1.17.1 it links
-// against; the dev clients load both from here (see scripts/dev-natives.sh). Not needed on servers or Windows.
-def enTranslatorNatives = rootProject.file('.cache/natives/en_translator-linux-x64').absolutePath
+// Sipher isn't published yet: build it next to this repository (../Sipher: ./gradlew assemble) or pass -PsipherJar=<path>.
+def sipherJar = rootProject.file(findProperty('sipherJar') ?: "../Sipher/build/libs/sipher-${sipher_version}.jar")
 
 repositories {
     maven { url = 'https://maven.maxhenkel.de/repository/public' }
@@ -51,17 +49,14 @@ neoForge {
         client {
             client()
             gameDirectory = rootProject.file('run/client')
-            systemProperty 'sherpa_onnx.native.path', enTranslatorNatives
             systemProperty 'theywilltalk.runtimeDir', runtimeDir
-            systemProperty 'theywilltalk.voiceServerJar', voiceServerJar
             jvmArguments.addAll '-Xmx6G'
         }
-        // A client that joins the dev server straight away as "Eirik" (offline mode).
+        // A client that joins the dev server straight away as "Eirik" (offline mode). -PjoinServer=host:port for another.
         clientJoin {
             client()
             gameDirectory = rootProject.file('run/client')
-            programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:25565', '--username', 'Eirik'
-            systemProperty 'sherpa_onnx.native.path', enTranslatorNatives
+            programArguments.addAll '--quickPlayMultiplayer', (findProperty('joinServer') ?: '127.0.0.1:25565').toString(), '--username', 'Eirik'
             jvmArguments.addAll '-Xmx4G'
         }
         server {
@@ -71,7 +66,6 @@ neoForge {
             systemProperty 'theywilltalk.dashboardNoAuth', 'true'
             systemProperty 'theywilltalk.webDir', file('src/main/resources/assets/theywilltalk/web').absolutePath
             systemProperty 'theywilltalk.runtimeDir', runtimeDir
-            systemProperty 'theywilltalk.voiceServerJar', voiceServerJar
             jvmArguments.addAll '-Xmx6G'
         }
         gameTestServer {
@@ -119,15 +113,17 @@ dependencies {
         localRuntime("com.ldtteam:domum-ornamentum:1.0.236-snapshot:main") { transitive = false }
     }
 
-    // EN Translator Core (CurseForge 1524584): transcribes each player's voice on their own client and relays the
-    // (English) text through the server, where our mixin picks it up. Voice input for villagers depends on it.
-    if (withEnTranslator) localRuntime "curse.maven:en-translator-core-1524584:8005810"
+    // Sipher: transcribes each player's voice on their own client (translated to English) and sends the captions to
+    // the server, which posts them as events. Voice input for villagers depends on it. Needs Simple Voice Chat.
+    compileOnly files(sipherJar)
+    if (withSipher && withVoicechat) localRuntime files(sipherJar)
 
     // BlueMap (villager + village markers on the 3D web map)
     compileOnly "de.bluecolored:bluemap-api:2.7.4"
     if (withBluemap) localRuntime "maven.modrinth:bluemap:5.7-neoforge"
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'com.google.code.gson:gson:2.10.1' // Minecraft's version; the plain unit tests don't see the game's libraries
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
@@ -146,6 +142,7 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
             mod_license            : mod_license,
             mod_version            : mod_version,
             mod_authors            : mod_authors,
+            sipher_version         : sipher_version,
     ]
     inputs.properties replaceProperties
     expand replaceProperties
@@ -155,9 +152,20 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
 sourceSets.main.resources.srcDir generateModMetadata
 neoForge.ideSyncTask generateModMetadata
 
-// The dev runs launch the voice server from its build output.
-tasks.matching { it.name in ['runServer', 'runClient'] }.configureEach { dependsOn ':voice-server:jar' }
+// The voice server (CPU voices, and the unpacker for downloaded archives) ships inside the mod jar.
+tasks.named('processResources', ProcessResources) {
+    from(project(':voice-server').tasks.named('jar')) { into 'assets/theywilltalk/runtime' }
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+}
+
+tasks.named('compileJava') {
+    doFirst {
+        if (!sipherJar.exists()) {
+            throw new GradleException("Sipher jar not found at $sipherJar. Build Sipher next to this repository " +
+                    "(cd ../Sipher && ./gradlew assemble) or pass -PsipherJar=<path to sipher.jar>.")
+        }
+    }
 }

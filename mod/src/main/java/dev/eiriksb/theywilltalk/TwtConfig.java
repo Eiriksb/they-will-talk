@@ -31,6 +31,7 @@ public final class TwtConfig {
     public static final ModConfigSpec.IntValue HISTORY_TURNS;
     public static final ModConfigSpec.BooleanValue IGNORE_GROUP_SPEECH;
     public static final ModConfigSpec.IntValue MAX_REPLIES_PER_MINUTE;
+    public static final ModConfigSpec.BooleanValue CRUDE_LANGUAGE;
 
     // villagers
     public static final ModConfigSpec.BooleanValue VANILLA_VILLAGERS;
@@ -53,13 +54,14 @@ public final class TwtConfig {
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
 
-        b.comment("The bundled AI runtime (llama.cpp LLM server + text-to-speech voice server).").push("runtime");
+        b.comment("The AI runtime (llama.cpp LLM server + text-to-speech voice servers).",
+                "Download the programs and models from the dashboard's Models page.").push("runtime");
         AUTO_START = b.comment("Start the AI processes automatically when the server starts.")
                 .define("autoStart", true);
-        RUNTIME_DIR = b.comment("Folder holding the bundled runtime. Empty = <server>/theywilltalk/runtime")
+        RUNTIME_DIR = b.comment("Folder holding the AI programs and models. Empty = <server>/theywilltalk/runtime")
                 .define("runtimeDir", "");
-        LLM_MODEL = b.comment("GGUF file name inside runtime/models/llm, or 'auto' for the first one found.",
-                        "Bundled: gemma-4-E2B (fast, ~1.6 GB VRAM). Drop gemma-4-E4B in for richer replies (~3 GB VRAM).")
+        LLM_MODEL = b.comment("GGUF file name inside runtime/models/llm, or 'auto' (the recommended one that is installed).",
+                        "Pick one on the dashboard's Models page, or drop your own GGUF into the folder and name it here.")
                 .define("llmModel", "auto");
         GPU_LAYERS = b.comment("Model layers to put on the GPU. 99 = everything, 0 = CPU only (slow).")
                 .defineInRange("gpuLayers", 99, 0, 999);
@@ -68,7 +70,7 @@ public final class TwtConfig {
         PARALLEL_SLOTS = b.comment("How many villagers can think at the same time.")
                 .defineInRange("parallelSlots", 2, 1, 8);
         TTS_ENGINE = b.comment("Voice engine:",
-                        "  'auto'       - Qwen3-TTS when it is bundled, otherwise Kokoro",
+                        "  'auto'       - Qwen3-TTS when it is installed, otherwise Kokoro",
                         "  'qwen3'      - Qwen3-TTS on the GPU: every villager gets a designed voice and really acts out emotions",
                         "  'kokoro'     - 54 voices on the CPU, pitch/speed mood shaping (lightest on the GPU)",
                         "  'supertonic' - 10 voices on the CPU, the lightest option overall")
@@ -109,6 +111,9 @@ public final class TwtConfig {
                 .define("ignoreGroupSpeech", true);
         MAX_REPLIES_PER_MINUTE = b.comment("A villager answers the same player at most this often (stops runaway loops).")
                 .defineInRange("maxRepliesPerMinute", 10, 1, 60);
+        CRUDE_LANGUAGE = b.comment("Villagers may swear and use crude language when it fits their mood and personality.",
+                        "Off keeps them clean. For strong language, also pick an uncensored model on the Models page.")
+                .define("crudeLanguage", false);
         b.pop();
 
         b.comment("Which villagers can talk.").push("villagers");
@@ -134,7 +139,8 @@ public final class TwtConfig {
                         "Use 0.0.0.0 to reach it from other machines (protected by the admin token).")
                 .define("bindAddress", "127.0.0.1");
         DASHBOARD_PORT = b.defineInRange("port", 8765, 1, 65535);
-        BLUEMAP_URL = b.comment("Public URL of the BlueMap web app, used to embed the 3D map in the dashboard.")
+        BLUEMAP_URL = b.comment("Where the server reaches BlueMap's web server. The dashboard serves BlueMap from it at /bluemap/,",
+                        "so admins only need the dashboard's port.")
                 .define("bluemapUrl", "http://localhost:8100");
         BLUEMAP_MARKERS = b.comment("Show talking villagers and villages as BlueMap markers.")
                 .define("bluemapMarkers", true);

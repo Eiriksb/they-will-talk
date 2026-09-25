@@ -8,14 +8,14 @@ import net.neoforged.fml.ModList;
 
 /**
  * Optional mod integrations. Each integration class is only loaded when its mod is present, so the mod runs fine
- * with any combination of MCA Reborn, MineColonies, BlueMap, Simple Voice Chat and EN Translator.
+ * with any combination of MCA Reborn, MineColonies, BlueMap, Simple Voice Chat and Sipher.
  */
 public final class Integrations {
     private final boolean mca = ModList.get().isLoaded("mca");
     private final boolean minecolonies = ModList.get().isLoaded("minecolonies");
     private final boolean bluemap = ModList.get().isLoaded("bluemap");
     private final boolean voicechat = ModList.get().isLoaded("voicechat");
-    private final boolean enTranslator = ModList.get().isLoaded("en_translator");
+    private final boolean sipher = ModList.get().isLoaded("sipher");
     private BlueMapMarkers blueMapMarkers;
 
     public void registerAdapters(VillagerRegistry registry) {
@@ -42,8 +42,8 @@ public final class Integrations {
         if (mca) {
             McaAdapter.warnIfMcaChatAiEnabled();
         }
-        if (!enTranslator) {
-            TheyWillTalk.LOGGER.info("EN Translator not installed: players can talk to villagers by typing in chat");
+        if (!sipher) {
+            TheyWillTalk.LOGGER.info("Sipher not installed: players can talk to villagers by typing in chat");
         }
         if (!voicechat) {
             TheyWillTalk.LOGGER.info("Simple Voice Chat not installed: villagers answer with subtitles only");
@@ -77,12 +77,17 @@ public final class Integrations {
         o.addProperty("minecolonies", minecolonies);
         o.addProperty("bluemap", bluemap);
         o.addProperty("voicechat", voicechat);
-        o.addProperty("enTranslator", enTranslator);
-        o.addProperty("enTranslatorLines", EnTranslatorBridge.transcriptsSeen());
+        o.addProperty("sipher", sipher);
+        o.addProperty("sipherLines", sipher ? SipherBridge.linesHeard() : 0);
         return o;
     }
 
     public boolean hasBlueMap() {
         return bluemap;
+    }
+
+    /** Dimension -> BlueMap map id, empty until BlueMap is up. */
+    public java.util.Map<String, String> blueMapMaps() {
+        return blueMapMarkers == null ? java.util.Map.of() : blueMapMarkers.mapIds();
     }
 }

@@ -15,17 +15,29 @@ import java.util.function.BooleanSupplier;
  * Turns a villager line into 48 kHz voice-chat audio with the best engine available:
  * <ul>
  *   <li><b>Qwen3-TTS</b> (GPU): the villager's designed voice acts out the emotion itself; streamed, so the villager
- *   starts talking after the first few frames.</li>
+ *   starts talking after the first few frames. With voice cloning installed every line is spoken in the villager's
+ *   once-designed voice ({@link VoiceBank}), otherwise VoiceDesign imagines it from the description each time.</li>
  *   <li><b>Kokoro / Supertonic</b> (CPU voice server): a cast voice with pitch/speed/volume mood shaping.</li>
  * </ul>
  */
 public final class SpeechRenderer {
     private final TtsClient voiceServer;
     private final QwenTtsClient qwen;
+    private final VoiceBank voices;
 
-    public SpeechRenderer(TtsClient voiceServer, QwenTtsClient qwen) {
+    public SpeechRenderer(TtsClient voiceServer, QwenTtsClient qwen, VoiceBank voices) {
         this.voiceServer = voiceServer;
         this.qwen = qwen;
+        this.voices = voices;
+    }
+
+    public VoiceBank voices() {
+        return voices;
+    }
+
+    /** Lines are spoken in each villager's cloned voice (Qwen3-TTS with voice cloning). */
+    public boolean cloning() {
+        return expressive() && voices.available();
     }
 
     /** Qwen3-TTS is running and not switched off in the config. */
@@ -52,28 +64,20 @@ public final class SpeechRenderer {
         if (expressive()) {
             long[] pushed = {0};
             try {
-                StreamingResampler rs = new StreamingResampler(QwenTtsClient.SAMPLE_RATE, AudioDsp.SVC_RATE);
-                boolean[] started = {false};
-                qwen.stream(text, VoiceDesign.forLine(designOf(p, f), emotion), null, seedOf(p), pcm -> {
-                    if (cancelled.getAsBoolean()) {
-                        return false;
+                if (voices.available()) {
+                    try {
+                        return streamCloned(p, f, text, emotion, stream, cancelled, pushed);
+                    } catch (IOException e) {
+                        if (pushed[0] > 0) {
+                            return pushed[0] * 1000L / AudioDsp.SVC_RATE; // broke off mid-sentence: don't start it over
+                        }
+                        TheyWillTalk.LOGGER.debug("Qwen3-TTS voice cloning failed, designing the voice for this line: {}", e.toString());
                     }
-                    short[] out = rs.push(pcm, false);
-                    if (!started[0] && out.length > 0) {
-                        fadeIn(out);
-                        started[0] = true;
-                    }
-                    stream.push(out);
-                    pushed[0] += out.length;
-                    return true;
-                });
-                short[] tail = rs.push(null, true);
-                stream.push(tail);
-                pushed[0] += tail.length;
-                return pushed[0] * 1000L / AudioDsp.SVC_RATE;
+                }
+                return streamQwen(qwen, text, VoiceDesign.forLine(designOf(p, f), emotion), null, seedOf(p), stream, cancelled, pushed);
             } catch (IOException e) {
                 if (pushed[0] > 0) {
-                    return pushed[0] * 1000L / AudioDsp.SVC_RATE; // broke off mid-sentence: don't start it over
+                    return pushed[0] * 1000L / AudioDsp.SVC_RATE;
                 }
                 TheyWillTalk.LOGGER.debug("Qwen3-TTS failed, falling back to the voice server: {}", e.toString());
             }
@@ -86,6 +90,64 @@ public final class SpeechRenderer {
         }
         stream.push(pcm);
         return pcm.length * 1000L / AudioDsp.SVC_RATE;
+    }
+
+    private long streamCloned(VillagerProfile p, VillagerFacts f, String text, String emotion, VoiceOutput.SpeechStream stream,
+                              BooleanSupplier cancelled, long[] pushed) throws IOException, InterruptedException {
+        String voice = voices.voice(p.uuid(), designOf(p, f), seedOf(p), emotion);
+        try {
+            return streamQwen(voices.cloner(), text, null, voice, seedOf(p), stream, cancelled, pushed);
+        } catch (IOException e) {
+            if (pushed[0] > 0 || e.getMessage() == null || !e.getMessage().contains("unknown voice")) {
+                throw e;
+            }
+            // The Base server restarted and forgot its voices: register them again and retry once.
+            voices.forgetRegistrations();
+            voice = voices.voice(p.uuid(), designOf(p, f), seedOf(p), emotion);
+            return streamQwen(voices.cloner(), text, null, voice, seedOf(p), stream, cancelled, pushed);
+        }
+    }
+
+    /** Streams one Qwen3-TTS request into the voice chat stream, resampled to 48 kHz. */
+    private static long streamQwen(QwenTtsClient client, String text, String instructions, String voice, long seed,
+                                   VoiceOutput.SpeechStream stream, BooleanSupplier cancelled, long[] pushed)
+            throws IOException, InterruptedException {
+        StreamingResampler rs = new StreamingResampler(QwenTtsClient.SAMPLE_RATE, AudioDsp.SVC_RATE);
+        boolean[] started = {false};
+        client.stream(text, instructions, voice, seed, pcm -> {
+            if (cancelled.getAsBoolean()) {
+                return false;
+            }
+            short[] out = rs.push(pcm, false);
+            if (!started[0] && out.length > 0) {
+                fadeIn(out);
+                started[0] = true;
+            }
+            stream.push(out);
+            pushed[0] += out.length;
+            return true;
+        });
+        short[] tail = rs.push(null, true);
+        stream.push(tail);
+        pushed[0] += tail.length;
+        return pushed[0] * 1000L / AudioDsp.SVC_RATE;
+    }
+
+    /**
+     * Gets a villager's voice clips ready ahead of their first line in this mood (runs while the LLM thinks).
+     * Does nothing without voice cloning.
+     */
+    public void prepare(VillagerProfile p, VillagerFacts f, String emotion) {
+        if (!expressive() || !voices.available()) {
+            return;
+        }
+        try {
+            voices.voice(p.uuid(), designOf(p, f), seedOf(p), emotion);
+        } catch (IOException e) {
+            TheyWillTalk.LOGGER.debug("Could not prepare the voice of {}: {}", p.name(), e.toString());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** A whole line as 48 kHz PCM (ambient chatter, dashboard previews). */

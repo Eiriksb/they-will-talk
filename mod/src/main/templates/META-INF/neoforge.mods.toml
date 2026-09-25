@@ -10,13 +10,10 @@ displayName="${mod_name}"
 authors="${mod_authors}"
 description='''
 Villagers talk back. Speak to vanilla villagers, MCA Reborn villagers and MineColonies citizens through
-Simple Voice Chat (transcribed by EN Translator) or chat, and they answer out loud with their own voice,
+Simple Voice Chat (transcribed by Sipher) or chat, and they answer out loud with their own voice,
 personality and memories, powered by a local AI model running on the server's GPU. Includes an admin
 dashboard with villager search, conversation history, family trees and a BlueMap-powered map.
 '''
-
-[[mixins]]
-config="${mod_id}.mixins.json"
 
 [[dependencies.${mod_id}]]
     modId="neoforge"
@@ -40,9 +37,9 @@ config="${mod_id}.mixins.json"
     side="BOTH"
 
 [[dependencies.${mod_id}]]
-    modId="en_translator"
+    modId="sipher"
     type="optional"
-    versionRange="[0,)"
+    versionRange="[${sipher_version},)"
     ordering="AFTER"
     side="BOTH"
 

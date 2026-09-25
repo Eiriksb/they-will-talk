@@ -10,9 +10,9 @@ out/
 .vscode/
 bin/
 
-# downloaded / assembled binaries and models (see scripts/fetch-runtime.sh)
+# AI programs and models (downloaded from the dashboard, or assembled by scripts/fetch-runtime.sh)
 .cache/
-runtime/
+/runtime/
 voice-server/libs/
 dist/
 

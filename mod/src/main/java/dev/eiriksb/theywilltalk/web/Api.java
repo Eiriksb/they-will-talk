@@ -26,6 +26,7 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -94,6 +95,7 @@ final class Api {
                     DashboardServer.sendJson(ex, 200, TtsClient.toJson(mod().tts().voices()));
                 }
             }
+            case "models" -> models(ex, method, parts);
             case "personas" -> DashboardServer.sendJson(ex, 200, personas());
             case "stream" -> stream(ex);
             default -> DashboardServer.sendJson(ex, 404, DashboardServer.error("unknown endpoint " + path));
@@ -214,6 +216,7 @@ final class Api {
         JsonArray problems = new JsonArray();
         rt.problems().forEach(problems::add);
         o.add("problems", problems);
+        o.addProperty("setupNeeded", rt.setupNeeded());
         return o;
     }
 
@@ -285,6 +288,17 @@ final class Api {
             case "conversations" -> DashboardServer.sendJson(ex, 200, villagerConversations(id));
             case "family" -> DashboardServer.sendJson(ex, 200, family(id));
             case "say" -> DashboardServer.sendJson(ex, 200, askVillager(id, DashboardServer.readJson(ex)));
+            case "voice-clip" -> voiceClip(ex, method, id, parts.length > 3 ? parts[3] : "");
+            case "voice-preview" -> villagerVoicePreview(ex, id);
+            case "face" -> {
+                var face = mod().faces() == null ? java.util.Optional.<byte[]>empty() : mod().faces().face(id);
+                if (face.isEmpty()) {
+                    ex.sendResponseHeaders(404, -1);
+                } else {
+                    ex.getResponseHeaders().set("Cache-Control", "no-cache");
+                    DashboardServer.send(ex, 200, "image/png", face.get());
+                }
+            }
             case "forget" -> {
                 db().exec("DELETE FROM memories WHERE villager_uuid=?", id);
                 db().exec("DELETE FROM relationships WHERE villager_uuid=?", id);
@@ -315,14 +329,72 @@ final class Api {
         v.addProperty("loaded", onServer(() -> mod().findEntity(id) != null).get(2, TimeUnit.SECONDS));
         VillagerProfile prof = mod().villagers().cached(id);
         if (prof != null) {
-            dev.eiriksb.theywilltalk.villager.VillagerFacts f = new dev.eiriksb.theywilltalk.villager.VillagerFacts();
-            f.kind = prof.kind();
-            f.job = v.has("job") && !v.get("job").isJsonNull() ? v.get("job").getAsString() : null;
-            f.ageGroup = v.has("age_group") && !v.get("age_group").isJsonNull() ? v.get("age_group").getAsString() : "adult";
-            v.addProperty("generatedVoiceDesign", dev.eiriksb.theywilltalk.villager.VoiceDesign.base(prof, f));
+            v.addProperty("generatedVoiceDesign", dev.eiriksb.theywilltalk.villager.VoiceDesign.base(prof, voiceFacts(v, prof)));
         }
         v.addProperty("expressiveVoices", mod().speech().expressive());
+        v.addProperty("voiceCloning", mod().speech().cloning());
+        mod().speech().voices().customClip(id).ifPresent(c -> {
+            JsonObject clip = new JsonObject();
+            clip.addProperty("seconds", Math.round(c.seconds() * 10) / 10.0);
+            clip.addProperty("transcript", c.transcript());
+            v.add("customVoice", clip);
+        });
         return v;
+    }
+
+    /** What a villager's voice depends on (kind, job, age), from their database row. */
+    private static dev.eiriksb.theywilltalk.villager.VillagerFacts voiceFacts(JsonObject row, VillagerProfile prof) {
+        dev.eiriksb.theywilltalk.villager.VillagerFacts f = new dev.eiriksb.theywilltalk.villager.VillagerFacts();
+        f.kind = prof.kind();
+        f.job = row.has("job") && !row.get("job").isJsonNull() ? row.get("job").getAsString() : null;
+        f.ageGroup = row.has("age_group") && !row.get("age_group").isJsonNull() ? row.get("age_group").getAsString() : "adult";
+        return f;
+    }
+
+    private static final int MAX_CLIP_BYTES = 12 * 1024 * 1024;
+
+    /** GET plays a villager's own voice clip; POST (raw WAV body, ?transcript=) sets it; POST .../remove drops it. */
+    private void voiceClip(HttpExchange ex, String method, UUID id, String action) throws Exception {
+        dev.eiriksb.theywilltalk.audio.VoiceBank bank = mod().speech().voices();
+        if (method.equals("POST") && action.equals("remove")) {
+            bank.removeCustomClip(id);
+            DashboardServer.sendJson(ex, 200, ok());
+        } else if (method.equals("POST")) {
+            byte[] wav = ex.getRequestBody().readNBytes(MAX_CLIP_BYTES + 1);
+            if (wav.length > MAX_CLIP_BYTES) {
+                DashboardServer.sendJson(ex, 413, DashboardServer.error("the clip is too big (12 MB at most)"));
+                return;
+            }
+            try {
+                bank.setCustomClip(id, wav, DashboardServer.query(ex.getRequestURI()).getOrDefault("transcript", ""));
+            } catch (IllegalArgumentException e) {
+                DashboardServer.sendJson(ex, 400, DashboardServer.error(e.getMessage()));
+                return;
+            }
+            DashboardServer.sendJson(ex, 200, ok());
+        } else {
+            var clip = bank.customClip(id);
+            if (clip.isEmpty()) {
+                DashboardServer.sendJson(ex, 404, DashboardServer.error("no voice clip"));
+                return;
+            }
+            DashboardServer.send(ex, 200, "audio/wav", Files.readAllBytes(clip.get().wav()));
+        }
+    }
+
+    /** A line in the villager's actual in-game voice (the same path the game uses). */
+    private void villagerVoicePreview(HttpExchange ex, UUID id) throws Exception {
+        JsonObject body = DashboardServer.readJson(ex);
+        VillagerProfile prof = mod().villagers().cached(id);
+        JsonObject row = row("SELECT job, age_group FROM villagers WHERE uuid = ?", id);
+        if (prof == null || row == null) {
+            DashboardServer.sendJson(ex, 404, DashboardServer.error("unknown villager"));
+            return;
+        }
+        String text = str(body, "text", "Hrmm. I'm " + prof.firstName() + ". Welcome to the village, traveller.");
+        short[] pcm = mod().speech().render(prof, voiceFacts(row, prof), text.length() > 400 ? text.substring(0, 400) : text,
+                str(body, "emotion", "neutral"));
+        DashboardServer.send(ex, 200, "audio/wav", dev.eiriksb.theywilltalk.audio.Wav.encode(pcm, AudioDsp.SVC_RATE));
     }
 
     private JsonObject villagerConversations(UUID id) throws Exception {
@@ -605,6 +677,10 @@ final class Api {
         JsonObject bm = new JsonObject();
         bm.addProperty("installed", mod().integrations().hasBlueMap());
         bm.addProperty("url", TwtConfig.BLUEMAP_URL.get());
+        JsonObject maps = new JsonObject();
+        mod().integrations().blueMapMaps().forEach(maps::addProperty);
+        bm.add("maps", maps);
+        bm.addProperty("running", !maps.isEmpty());
         o.add("bluemap", bm);
         return o;
     }
@@ -616,7 +692,7 @@ final class Api {
         RuntimeManager rt = mod().runtime();
         o.addProperty("runtimeDir", String.valueOf(rt.runtimeDir()));
         JsonArray procs = new JsonArray();
-        for (ManagedProcess p : new ManagedProcess[]{rt.llmProcess(), rt.qwenTtsProcess(), rt.voiceProcess()}) {
+        for (ManagedProcess p : new ManagedProcess[]{rt.llmProcess(), rt.qwenTtsProcess(), rt.qwenCloneProcess(), rt.voiceProcess()}) {
             if (p == null) {
                 continue;
             }
@@ -646,8 +722,50 @@ final class Api {
         cfg.addProperty("voiceDistance", TwtConfig.VOICE_DISTANCE.get());
         cfg.addProperty("textChat", TwtConfig.TEXT_CHAT.get());
         cfg.addProperty("ambientChatter", TwtConfig.AMBIENT_CHATTER.get());
+        cfg.addProperty("crudeLanguage", TwtConfig.CRUDE_LANGUAGE.get());
         o.add("config", cfg);
         return o;
+    }
+
+    // ---- models (downloads) -----------------------------------------------------------------------------------
+
+    private void models(HttpExchange ex, String method, String[] parts) throws Exception {
+        RuntimeManager rt = mod().runtime();
+        if (method.equals("POST") && parts.length > 1) {
+            JsonObject body = DashboardServer.readJson(ex);
+            String id = body.has("id") ? body.get("id").getAsString() : "";
+            try {
+                switch (parts[1]) {
+                    case "install" -> {
+                        if (id.equals("recommended")) {
+                            rt.installRecommended();
+                        } else {
+                            rt.installer().install(id);
+                        }
+                    }
+                    case "cancel" -> rt.installer().cancel(id);
+                    case "remove" -> rt.remove(id);
+                    case "use" -> rt.use(id);
+                    case "settings" -> {
+                        if (body.has("crudeLanguage")) {
+                            TwtConfig.CRUDE_LANGUAGE.set(body.get("crudeLanguage").getAsBoolean());
+                            TwtConfig.CRUDE_LANGUAGE.save();
+                        }
+                        if (body.has("ttsEngine")) {
+                            rt.setTtsEngine(body.get("ttsEngine").getAsString());
+                        }
+                    }
+                    default -> {
+                        DashboardServer.sendJson(ex, 404, DashboardServer.error("unknown action " + parts[1]));
+                        return;
+                    }
+                }
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                DashboardServer.sendJson(ex, 400, DashboardServer.error(e.getMessage()));
+                return;
+            }
+        }
+        DashboardServer.sendJson(ex, 200, rt.modelsJson());
     }
 
     private JsonArray personas() {

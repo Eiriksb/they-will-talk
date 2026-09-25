@@ -123,7 +123,7 @@ public final class ConversationManager {
     // =========================================================================================================
 
     /**
-     * A player said something (voice transcript from EN Translator, typed chat, a command...). Server thread.
+     * A player said something (voice caption from Sipher, typed chat, a command...). Server thread.
      *
      * @return true when a villager took it as addressed to them
      */
@@ -426,11 +426,19 @@ public final class ConversationManager {
             StringBuilder spoken = new StringBuilder();
             Thread speaker = Thread.ofVirtual().name("twt-speak-" + profile.firstName())
                     .start(() -> speakLoop(turn, ss, sentences, stream, spoken, t0));
+            // A villager's first cloned line needs their voice clips: make them while the LLM thinks.
+            Thread.ofVirtual().start(() -> speech.prepare(profile, turn.facts, "neutral"));
+            boolean[] moodPrepared = {false};
 
             CompletableFuture<LlmClient.Result> future = llm.chat(isGreeting ? LlmClient.Priority.GREETING : LlmClient.Priority.CONVERSATION,
                     messages, TwtConfig.TEMPERATURE.get(), TwtConfig.MAX_REPLY_WORDS.get() * 2 + 24, null, delta -> {
                         if (!turn.cancelled) {
                             ss.accept(delta);
+                            if (!moodPrepared[0] && ss.emotionKnown()) {
+                                moodPrepared[0] = true;
+                                String emotion = ss.emotion();
+                                Thread.ofVirtual().start(() -> speech.prepare(profile, turn.facts, emotion));
+                            }
                         }
                     });
             turn.llmFuture = future;
@@ -500,10 +508,17 @@ public final class ConversationManager {
         }
     }
 
+    /** Rough speaking rate of the voices (about 15 characters a second). */
+    private static final long SPOKEN_MS_PER_CHAR = 65;
+
     private void speakLoop(Turn turn, SentenceStream ss, BlockingQueue<String> sentences, VoiceOutput.SpeechStream stream,
                            StringBuilder spoken, long t0) {
-        VillagerProfile profile = turn.profile;
         boolean audio = stream != VoiceOutput.SpeechStream.NOOP;
+        // Qwen3-TTS VoiceDesign imagines the voice anew for every request, so a reply split into sentences would change
+        // voice at every full stop: it gets the whole reply at once (the LLM finishes a short reply in well under a
+        // second). The voice server's cast voices are fixed and can start on the first sentence.
+        boolean wholeReply = audio && speech.expressive();
+        List<String> held = new ArrayList<>();
         boolean first = true;
         try {
             while (true) {
@@ -511,52 +526,68 @@ public final class ConversationManager {
                 if (sentence == null || sentence.equals(END) || turn.cancelled) {
                     break;
                 }
-                String emotion = ss.emotion();
-                if (first) {
-                    server.execute(() -> {
-                        Entity v = turn.villager.get();
-                        if (v != null) {
-                            Gestures.react(v, turn.facts.kind, emotion);
-                        }
-                    });
+                if (wholeReply) {
+                    held.add(sentence);
+                    continue;
                 }
-                spoken.append(sentence).append(' ');
-                long delayMs = 0;
-                long[] firstPush = {-1};
-                if (audio && !turn.cancelled) {
-                    delayMs = stream.queuedMs();
-                    // Note when the first audio of this sentence actually goes out (the engine may still be generating).
-                    VoiceOutput.SpeechStream timed = first ? new TimedStream(stream, firstPush) : stream;
-                    try {
-                        speech.speak(profile, turn.facts, sentence, emotion, first, timed, () -> turn.cancelled);
-                    } catch (Exception e) {
-                        TheyWillTalk.LOGGER.debug("TTS failed, subtitles only: {}", e.toString());
-                    }
-                }
-                if (first) {
-                    long at = firstPush[0] > 0 ? firstPush[0] : System.currentTimeMillis();
-                    turn.firstAudioMs = at - t0 + delayMs;
-                    lastLatencyMs = turn.firstAudioMs;
-                    first = false;
-                }
-                Entity speakerEntity = turn.villager.get();
-                if (speakerEntity != null) {
-                    rememberSpoken(speakerEntity, sentence, System.currentTimeMillis() + stream.queuedMs());
-                }
-                String line = sentence;
-                if (audio) {
-                    timer.schedule(() -> server.execute(() -> {
-                        Entity v = turn.villager.get();
-                        if (v != null && !turn.cancelled) {
-                            caption(v, profile, turn.facts.kind, line);
-                        }
-                    }), delayMs, TimeUnit.MILLISECONDS);
-                }
+                speakPart(turn, ss.emotion(), sentence, List.of(sentence), first, audio, stream, spoken, t0);
+                first = false;
+            }
+            if (!held.isEmpty() && !turn.cancelled) {
+                speakPart(turn, ss.emotion(), String.join(" ", held), held, true, audio, stream, spoken, t0);
             }
         } catch (InterruptedException ignored) {
             // cancelled
         } finally {
             stream.finish();
+        }
+    }
+
+    /** Speaks one piece of a reply (a sentence, or the whole reply) and captions its sentences as they play. */
+    private void speakPart(Turn turn, String emotion, String text, List<String> lines, boolean first, boolean audio,
+                           VoiceOutput.SpeechStream stream, StringBuilder spoken, long t0) {
+        VillagerProfile profile = turn.profile;
+        if (first) {
+            server.execute(() -> {
+                Entity v = turn.villager.get();
+                if (v != null) {
+                    Gestures.react(v, turn.facts.kind, emotion);
+                }
+            });
+        }
+        spoken.append(text).append(' ');
+        long delayMs = 0;
+        long[] firstPush = {-1};
+        if (audio && !turn.cancelled) {
+            delayMs = stream.queuedMs();
+            // Note when the first audio actually goes out (the engine may still be generating).
+            VoiceOutput.SpeechStream timed = first ? new TimedStream(stream, firstPush) : stream;
+            try {
+                speech.speak(profile, turn.facts, text, emotion, first, timed, () -> turn.cancelled);
+            } catch (Exception e) {
+                TheyWillTalk.LOGGER.debug("TTS failed, subtitles only: {}", e.toString());
+            }
+        }
+        if (first) {
+            long at = firstPush[0] > 0 ? firstPush[0] : System.currentTimeMillis();
+            turn.firstAudioMs = at - t0 + delayMs;
+            lastLatencyMs = turn.firstAudioMs;
+        }
+        Entity speakerEntity = turn.villager.get();
+        long offsetMs = 0; // later sentences of a whole reply are captioned roughly when they're reached
+        for (String line : lines) {
+            if (speakerEntity != null) {
+                rememberSpoken(speakerEntity, line, System.currentTimeMillis() + stream.queuedMs());
+            }
+            if (audio) {
+                timer.schedule(() -> server.execute(() -> {
+                    Entity v = turn.villager.get();
+                    if (v != null && !turn.cancelled) {
+                        caption(v, profile, turn.facts.kind, line);
+                    }
+                }), delayMs + offsetMs, TimeUnit.MILLISECONDS);
+            }
+            offsetMs += line.length() * SPOKEN_MS_PER_CHAR;
         }
     }
 

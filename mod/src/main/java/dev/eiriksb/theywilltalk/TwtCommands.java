@@ -30,7 +30,7 @@ import java.util.Comparator;
  * /twt dashboard                       clickable admin dashboard login link              (op)
  * /twt say &lt;villager&gt; &lt;message&gt;       make a villager answer you / the console          (op)
  * /twt hear &lt;player&gt; &lt;message&gt;        pretend a player said something by voice          (op)
- * /twt relay &lt;player&gt; &lt;lang&gt; &lt;text&gt;  push a line through EN Translator's real relay     (op)
+ * /twt relay &lt;player&gt; &lt;lang&gt; &lt;text&gt;  push a line through Sipher's real caption relay    (op)
  * /twt info &lt;villager&gt;                 who is this villager?                              (op)
  * /twt restart                         restart the AI processes                           (op)
  * </pre>
@@ -51,7 +51,7 @@ final class TwtCommands {
                 .then(Commands.literal("hear").requires(s -> s.hasPermission(3))
                         .then(Commands.argument("player", EntityArgument.player())
                                 .then(Commands.argument("message", StringArgumentType.greedyString()).executes(TwtCommands::hear))))
-                .then(Commands.literal("relay").requires(s -> s.hasPermission(3) && net.neoforged.fml.ModList.get().isLoaded("en_translator"))
+                .then(Commands.literal("relay").requires(s -> s.hasPermission(3) && net.neoforged.fml.ModList.get().isLoaded("sipher"))
                         .then(Commands.argument("player", EntityArgument.player())
                                 .then(Commands.argument("lang", StringArgumentType.word())
                                         .then(Commands.argument("text", StringArgumentType.greedyString()).executes(TwtCommands::relay)))))
@@ -117,30 +117,16 @@ final class TwtCommands {
         return heard ? 1 : 0;
     }
 
-    private static int relayLine;
-
-    /**
-     * Testing aid without a microphone: sends "source | english" through EN Translator's own server relay, exactly as
-     * if the player's client had transcribed it - so the chat bubble, our mixin and the villager reply all run for real.
-     */
+    /** Testing aid without a microphone: "text | english" through Sipher's caption relay, like a transcribed voice line. */
     private static int relay(CommandContext<CommandSourceStack> ctx) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
         ServerPlayer player = EntityArgument.getPlayer(ctx, "player");
         String lang = StringArgumentType.getString(ctx, "lang");
         String[] parts = StringArgumentType.getString(ctx, "text").split("\\|", 2);
-        String source = parts[0].trim();
-        String english = parts.length > 1 ? parts[1].trim() : source;
-        try {
-            Object service = Class.forName("com.example.voicetranslator.VoiceTranslatorMod").getMethod("getTranslationService").invoke(null);
-            java.lang.reflect.Method relay = service.getClass().getMethod("relayClientTranslation", java.util.UUID.class, String.class,
-                    String.class, String.class, String.class, int.class, int.class, boolean.class);
-            int id = 900_000 + ++relayLine;
-            relay.invoke(service, player.getUUID(), source, english, lang, "en", 4000, id, true);  // partial: ignored by villagers
-            relay.invoke(service, player.getUUID(), source, english, lang, "en", 4000, id, false); // final line
-        } catch (ReflectiveOperationException e) {
-            ctx.getSource().sendFailure(Component.literal("EN Translator relay not available: " + e));
-            return 0;
-        }
-        ctx.getSource().sendSuccess(() -> Component.literal("Relayed through EN Translator: " + english), false);
+        String text = parts[0].trim();
+        // Like Sipher's clients: no English when the line already is English.
+        String english = parts.length > 1 ? parts[1].trim() : "";
+        dev.eiriksb.theywilltalk.integration.SipherBridge.relay(player, lang, text, english);
+        ctx.getSource().sendSuccess(() -> Component.literal("Relayed through Sipher: " + (english.isEmpty() ? text : english)), false);
         return 1;
     }
 

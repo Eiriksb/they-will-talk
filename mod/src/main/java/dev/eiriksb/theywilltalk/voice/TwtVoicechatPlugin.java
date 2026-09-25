@@ -62,7 +62,7 @@ public final class TwtVoicechatPlugin implements VoicechatPlugin {
         TheyWillTalk.setVoiceOutput(new SvcVoiceOutput(api));
     }
 
-    /** Only used to know who's speaking into a group; transcription itself happens in EN Translator. */
+    /** Only used to know who's speaking into a group; transcription itself happens in Sipher. */
     private void onMic(MicrophonePacketEvent event) {
         VoicechatConnection sender = event.getSenderConnection();
         if (sender != null && sender.isInGroup()) {

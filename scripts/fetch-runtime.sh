@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Assembles runtime/<platform> + runtime/models: everything the mod launches (LLM server, voice servers, models).
+# Assembles runtime/<platform> + runtime/models ahead of time: the LLM server, voice servers and models.
 #
-# BUILD/PACKAGING TIME ONLY. The mod itself never downloads anything - it only uses what this script puts in the
-# bundle. Re-running is cheap: downloads are cached in .cache/downloads.
+# OPTIONAL, for offline servers (see package.sh). Normally admins download the same things from the dashboard's
+# Models page (assets/theywilltalk/runtime/catalog.json). Re-running is cheap: downloads are cached in .cache/downloads.
 #
 #   scripts/fetch-runtime.sh [linux-x64|windows-x64]
 set -euo pipefail
@@ -11,6 +11,7 @@ PLATFORM="${1:-linux-x64}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RT="$ROOT/runtime"
 CACHE="$ROOT/.cache/downloads"
+META="$ROOT/mod/src/main/resources/assets/theywilltalk/runtime/engine-meta"
 mkdir -p "$CACHE" "$RT/models/llm" "$RT/models/tts"
 
 # ---- pinned versions ----------------------------------------------------------------------------------------------
@@ -67,20 +68,15 @@ tmp="$(mktemp -d)"
 tar xjf "$CACHE/kokoro-multi-lang-v1_0.tar.bz2" -C "$tmp"
 mv "$tmp"/kokoro-multi-lang-v1_0 "$RT/models/tts/kokoro"
 rm -rf "$RT/models/tts/kokoro/dict" "$RT/models/tts/kokoro/"*.fst "$RT/models/tts/kokoro/lexicon-zh.txt"   # English only
-cp "$ROOT/scripts/engine-meta/kokoro.json" "$RT/models/tts/kokoro/twt-engine.json"
+cp "$META/kokoro.json" "$RT/models/tts/kokoro/twt-engine.json"
 # Optional extra engine (OpenRAIL-licensed model, not bundled by default): TWT_WITH_SUPERTONIC=1
 if [ "${TWT_WITH_SUPERTONIC:-0}" = "1" ]; then
   dl "$SUPERTONIC_URL" "$CACHE/supertonic-3.tar.bz2"
   tar xjf "$CACHE/supertonic-3.tar.bz2" -C "$tmp"
   mv "$tmp"/sherpa-onnx-supertonic-3-tts-int8-* "$RT/models/tts/supertonic"
-  cp "$ROOT/scripts/engine-meta/supertonic.json" "$RT/models/tts/supertonic/twt-engine.json"
+  cp "$META/supertonic.json" "$RT/models/tts/supertonic/twt-engine.json"
 fi
 rm -rf "$tmp"
-
-echo "== voice server jar"
-(cd "$ROOT" && ./gradlew -q :voice-server:jar)
-mkdir -p "$RT/voice-server"
-cp "$ROOT/voice-server/build/libs/voice-server.jar" "$RT/voice-server/"
 
 echo "== expressive voices: Qwen3-TTS (GPU, qwentts.cpp)"
 mkdir -p "$RT/models/qwentts"

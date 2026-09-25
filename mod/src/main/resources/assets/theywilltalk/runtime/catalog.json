@@ -1,0 +1,271 @@
+{
+  "_comment": "Everything the dashboard can download. Compiled into the mod jar; every file is pinned to a revision and a SHA-256. Paths are relative to the runtime folder; {platform} is linux-x64 or windows-x64.",
+  "packages": [
+    {
+      "id": "llm-runtime",
+      "group": "programs",
+      "name": "llama.cpp server + NVIDIA CUDA runtime",
+      "summary": "Runs the villager brain on the GPU (llama.cpp build b11160, CUDA 12).",
+      "licence": "MIT (llama.cpp), NVIDIA CUDA EULA (redistributable runtime)",
+      "source": "github.com/ggml-org/llama.cpp",
+      "tags": ["recommended"],
+      "check": ["{platform}/llama/llama-server{exe}"],
+      "platforms": {
+        "linux-x64": [
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11160/llama-b11160-bin-ubuntu-cuda-12.8-x64.tar.gz",
+            "sha256": "8ed8d659383b6624ef2bd14ebd6984c8c1b1b2f13e4ba0c5c43f6038ca22591d",
+            "size": 169485202,
+            "archive": "tar.gz",
+            "into": "linux-x64/llama",
+            "flatten": true,
+            "include": ["llama-server", "libllama*.so*", "libggml*.so*", "libmtmd.so*", "LICENSE*"]
+          },
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11160/cudart-llama-b11160-bin-ubuntu-cuda-12.8-x64.tar.gz",
+            "sha256": "54776c67e34b536f6123b1a0697931f86f846f9f71baa9d86f550485fbbc9df1",
+            "size": 594375794,
+            "archive": "tar.gz",
+            "into": "linux-x64/cuda",
+            "flatten": true,
+            "include": ["lib*"]
+          }
+        ],
+        "windows-x64": [
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11160/llama-b11160-bin-win-cuda-12.4-x64.zip",
+            "sha256": "e2bcd71b9a03e4ed7d8bdf77f129eb682d63bbff244ef24fbbe40f1003368763",
+            "size": 254621982,
+            "archive": "zip",
+            "into": "windows-x64/llama",
+            "flatten": true,
+            "include": ["llama-server.exe", "*.dll", "LICENSE*"]
+          },
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11160/cudart-llama-bin-win-cuda-12.4-x64.zip",
+            "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+            "size": 391443627,
+            "archive": "zip",
+            "into": "windows-x64/cuda",
+            "flatten": true,
+            "include": ["*.dll"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "qwentts-server",
+      "group": "programs",
+      "name": "Qwen3-TTS server",
+      "summary": "Runs the expressive Qwen3-TTS voices on the GPU (qwentts.cpp 6a3e912, CUDA), built by They Will Talk. Uses the CUDA runtime from the llama.cpp package.",
+      "licence": "MIT (qwentts.cpp)",
+      "source": "github.com/Eiriksb/they-will-talk (built from ServeurpersoCom/qwentts.cpp)",
+      "unavailable": "No prebuilt download for this platform yet: villagers use the CPU voices. Advanced: build qwentts.cpp yourself and put tts-server in {platform}/qwentts/ inside the runtime folder.",
+      "requires": ["llm-runtime"],
+      "check": ["{platform}/qwentts/tts-server{exe}"],
+      "platforms": {
+        "linux-x64": [
+          {
+            "url": "https://github.com/Eiriksb/they-will-talk/releases/download/qwentts-6a3e912/qwentts-tts-server-6a3e912-linux-x64.tar.gz",
+            "sha256": "e4537a75c75da7a339a434bf57c4b4b7f85aa51252ddbb8ebeff5e4f6ebf3bcf",
+            "size": 89033621,
+            "archive": "tar.gz",
+            "into": "linux-x64/qwentts",
+            "flatten": true,
+            "include": ["tts-server", "LICENSE*"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-e2b",
+      "group": "brain",
+      "name": "Gemma 4 E2B",
+      "summary": "Fast and light. The default villager brain: about 1.6 GB of GPU memory.",
+      "licence": "Apache-2.0",
+      "source": "huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF",
+      "tags": ["recommended"],
+      "requires": ["llm-runtime"],
+      "llmModel": "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
+      "check": ["models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/resolve/66a399f68ddd113b06dff02fca9523e55465d11d/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
+            "sha256": "e531007218dfab990486a5de7676a6932d6ea8dea233d1f698d7c21cf8a16889",
+            "size": 2620370976,
+            "into": "models/llm"
+          }
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-e4b",
+      "group": "brain",
+      "name": "Gemma 4 E4B",
+      "summary": "Richer, smarter replies. About 3 GB of GPU memory and a bit slower.",
+      "licence": "Apache-2.0",
+      "source": "huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF",
+      "requires": ["llm-runtime"],
+      "llmModel": "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+      "check": ["models/llm/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/8c5a9e4fd5482e2be20fe0bf013b4c262a8f4265/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+            "sha256": "df0fd4ee07072c607c29a0a1cb4f98918426cca12f45a2776bdd6ee6d09a4de3",
+            "size": 4215695776,
+            "into": "models/llm"
+          }
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-e2b-uncensored",
+      "group": "brain",
+      "name": "Gemma 4 E2B uncensored",
+      "summary": "Gemma 4 E2B with its refusals removed (abliterated by huihui-ai). Swears freely when crude language is on. About 2 GB of GPU memory.",
+      "licence": "Apache-2.0",
+      "source": "huggingface.co/huihui-ai/Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-GGUF",
+      "tags": ["uncensored"],
+      "requires": ["llm-runtime"],
+      "llmModel": "Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf",
+      "check": ["models/llm/Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://huggingface.co/huihui-ai/Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-GGUF/resolve/e38a3cdcf55879424c971d0961ea70b82870b989/Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf",
+            "sha256": "6bc1f421ba870b01a2efbb6904a28bda0ae3ccde57b18eb5e9203c3db05effe9",
+            "size": 3416118240,
+            "into": "models/llm"
+          }
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-e4b-uncensored",
+      "group": "brain",
+      "name": "Gemma 4 E4B uncensored",
+      "summary": "Gemma 4 E4B with its refusals removed (abliterated by huihui-ai). The smartest uncensored option. About 3.5 GB of GPU memory.",
+      "licence": "Apache-2.0",
+      "source": "huggingface.co/huihui-ai/Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-GGUF",
+      "tags": ["uncensored"],
+      "requires": ["llm-runtime"],
+      "llmModel": "Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf",
+      "check": ["models/llm/Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://huggingface.co/huihui-ai/Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-GGUF/resolve/bc37dec4db35ea0fcad97be7a8c6b3f6a499616b/Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf",
+            "sha256": "64434f2da081f912729e5c4732def7303eb5244d3fee493b9675bc4e9af52d4c",
+            "size": 5302272352,
+            "into": "models/llm"
+          }
+        ]
+      }
+    },
+    {
+      "id": "kokoro",
+      "group": "voices",
+      "name": "Kokoro voices",
+      "summary": "54 English voices on the CPU, mood shaped by pitch and speed. Light on the GPU and always used as the fallback.",
+      "licence": "Apache-2.0 (Kokoro-82M), GPL-3.0 (espeak-ng data)",
+      "source": "github.com/k2-fsa/sherpa-onnx",
+      "tags": ["recommended"],
+      "ttsEngine": "kokoro",
+      "check": ["models/tts/kokoro/twt-engine.json"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+            "sha256": "c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298",
+            "size": 349906910,
+            "archive": "tar.bz2",
+            "into": "models/tts/kokoro",
+            "strip": 1,
+            "exclude": ["dict/**", "*.fst", "lexicon-zh.txt"]
+          },
+          {
+            "resource": "engine-meta/kokoro.json",
+            "into": "models/tts/kokoro",
+            "name": "twt-engine.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "supertonic",
+      "group": "voices",
+      "name": "Supertonic voices",
+      "summary": "10 voices on the CPU, the lightest option overall.",
+      "licence": "OpenRAIL-M (read the model licence before use)",
+      "source": "github.com/k2-fsa/sherpa-onnx",
+      "ttsEngine": "supertonic",
+      "check": ["models/tts/supertonic/twt-engine.json"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+            "sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+            "size": 128774318,
+            "archive": "tar.bz2",
+            "into": "models/tts/supertonic",
+            "strip": 1
+          },
+          {
+            "resource": "engine-meta/supertonic.json",
+            "into": "models/tts/supertonic",
+            "name": "twt-engine.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": "qwen3-tts",
+      "group": "voices",
+      "name": "Qwen3-TTS VoiceDesign",
+      "summary": "Expressive GPU voices: every villager gets a voice described in words and really acts out emotions. About 2.5 GB of GPU memory. Needs the Qwen3-TTS server.",
+      "licence": "Apache-2.0",
+      "source": "huggingface.co/Serveurperso/Qwen3-TTS-GGUF",
+      "requires": ["qwentts-server"],
+      "ttsEngine": "qwen3",
+      "check": ["models/qwentts/qwen-talker-1.7b-voicedesign-Q4_K_M.gguf", "models/qwentts/qwen-tokenizer-12hz-Q8_0.gguf"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-voicedesign-Q4_K_M.gguf",
+            "sha256": "7605ed0cc5e72059f27468c27f70c070e05d1cc0c7b1c76bfb9cba717a59eee3",
+            "size": 1182630816,
+            "into": "models/qwentts"
+          },
+          {
+            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-tokenizer-12hz-Q8_0.gguf",
+            "sha256": "1883beeed99348fc35e23dd225e9082f93f6f8c109330a33d935baa8acdbfd94",
+            "size": 291150624,
+            "into": "models/qwentts"
+          }
+        ]
+      }
+    },
+    {
+      "id": "qwen3-tts-clone",
+      "group": "voices",
+      "name": "Qwen3-TTS voice cloning",
+      "summary": "Keeps every villager's Qwen3-TTS voice exactly the same from line to line: each voice is designed once, then every line and mood is spoken by the Base model cloning it. About 1.5 GB more GPU memory.",
+      "licence": "Apache-2.0",
+      "source": "huggingface.co/Serveurperso/Qwen3-TTS-GGUF",
+      "requires": ["qwen3-tts"],
+      "check": ["models/qwentts/qwen-talker-1.7b-base-Q4_K_M.gguf"],
+      "platforms": {
+        "any": [
+          {
+            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-base-Q4_K_M.gguf",
+            "sha256": "ea393ebaf2167ea23ce9fc18b093822851358a950d7075cd47ab4f6ce23e887d",
+            "size": 1219245248,
+            "into": "models/qwentts"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@ package dev.eiriksb.theywilltalk.conversation;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.ai.LlmClient.Message;
 import dev.eiriksb.theywilltalk.ai.SentenceStream;
 import dev.eiriksb.theywilltalk.data.Store;
@@ -175,7 +176,8 @@ public final class PromptBuilder {
                 - Never admit to being an AI, a model or a game character. Stay in character no matter what.
                 - The player's words come from speech recognition and may contain small mistakes; guess what they meant.
                 - React to rudeness or kindness like a real person with your personality would. Mention names, memories and gossip when it fits.
-                """.formatted(playerName, p.firstName(), maxWords, emotionTags()));
+                - %s
+                """.formatted(playerName, p.firstName(), maxWords, emotionTags(), languageRule()));
 
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.system(sys.toString()));
@@ -188,6 +190,13 @@ public final class PromptBuilder {
         }
         msgs.add(Message.user(playerText));
         return msgs;
+    }
+
+    /** The crudeLanguage switch: clean by default, swearing allowed when an admin turns it on. */
+    static String languageRule() {
+        return TwtConfig.CRUDE_LANGUAGE.get()
+                ? "Crude language is allowed: swear, curse and be vulgar whenever it fits your mood and personality, like a real, rough villager would."
+                : "Keep your language clean: no swearing or vulgar words, even when you're angry.";
     }
 
     static String emotionTags() {
@@ -307,7 +316,7 @@ public final class PromptBuilder {
 
                 Write 2 to 4 short spoken lines, alternating between A and B, starting with A. Each line at most 20 words.
                 Make it characterful and funny: gossip, complaints, village life, the weather, trades, monsters. English only.
-                """);
+                """).append(languageRule()).append('\n');
         return List.of(Message.system(sys.toString()), Message.user("Write the conversation now."));
     }
 

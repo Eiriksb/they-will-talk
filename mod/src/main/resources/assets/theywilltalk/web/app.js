@@ -46,6 +46,7 @@
     refresh: '<path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/>',
     external: '<path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/>',
     logout: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>',
+    download: '<path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 19h16"/>',
   };
   const icon = (name) => { const e = h('span', { style: { display: 'inline-flex' } }); e.innerHTML = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`; return e.firstChild; };
   const VILLAGER_SVG = '<svg viewBox="0 0 16 16" shape-rendering="crispEdges"><rect width="16" height="16" fill="#2a5d3f"/><rect x="3" y="2" width="10" height="3" fill="#4a2f1b"/><rect x="3" y="4" width="10" height="8" fill="#bd8b72"/><rect x="4" y="6" width="3" height="1" fill="#3b2414"/><rect x="9" y="6" width="3" height="1" fill="#3b2414"/><rect x="5" y="7" width="1" height="1" fill="#2f8a3b"/><rect x="10" y="7" width="1" height="1" fill="#2f8a3b"/><rect x="7" y="8" width="2" height="4" fill="#a86f58"/><rect x="3" y="12" width="10" height="3" fill="#6b4a2b"/></svg>';
@@ -67,8 +68,16 @@
   const time = (ts) => new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const initials = (n) => (n || '?').split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
-  function avatar(name, kind, alive = true, big = false) {
-    return h('div', { class: `avatar ${kind || ''} ${alive ? '' : 'dead'} ${big ? 'lg' : ''}`, 'aria-hidden': 'true' }, initials(name));
+  /** Initials in the villager's colour, replaced by their real face (drawn from their skin) once it loads. */
+  function avatar(name, kind, alive = true, big = false, uuid = null) {
+    const el = h('div', { class: `avatar ${kind || ''} ${alive ? '' : 'dead'} ${big ? 'lg' : ''}`, 'aria-hidden': 'true' }, initials(name));
+    if (uuid) {
+      const img = new Image();
+      img.alt = '';
+      img.onload = () => { el.replaceChildren(img); el.classList.add('face'); };
+      img.src = `/api/villager/${encodeURIComponent(uuid)}/face`;
+    }
+    return el;
   }
   const kindTag = (kind) => h('span', { class: `kind ${kind}` }, KIND_LABEL[kind] || kind);
   function affinityBar(v) {
@@ -138,6 +147,7 @@
     ['#/conversations', 'chat', 'Conversations'],
     ['#/map', 'map', 'Map'],
     ['#/runtime', 'cpu', 'AI & voices'],
+    ['#/models', 'download', 'Models'],
   ];
   let main, titleEl, crumbsEl, statusEl, liveEl;
   let cleanup = [];
@@ -218,6 +228,7 @@
         case 'conversation': await viewConversation(parts[1]); break;
         case 'map': await viewMap(q); break;
         case 'runtime': await viewRuntime(); break;
+        case 'models': await viewModels(); break;
         default: main.replaceChildren(h('div', { class: 'empty' }, 'Not found'));
       }
     } catch (e) {
@@ -284,8 +295,10 @@
       const o = await api('/overview');
       const r = o.runtime;
       statusEl.replaceChildren(
-        h('span', { class: 'pill ' + (r.llmReady ? 'ok' : 'warn') }, h('span', { class: 'dot' }), r.llmReady ? 'Brain ready' : 'Brain starting'),
-        r.expressiveVoices
+        r.setupNeeded
+          ? h('a', { class: 'pill warn', href: '#/models' }, h('span', { class: 'dot' }), 'AI not installed')
+          : h('span', { class: 'pill ' + (r.llmReady ? 'ok' : 'warn') }, h('span', { class: 'dot' }), r.llmReady ? 'Brain ready' : 'Brain starting'),
+        r.setupNeeded ? null : r.expressiveVoices
           ? h('span', { class: 'pill ok' }, h('span', { class: 'dot' }), 'Expressive voices')
           : h('span', { class: 'pill ' + (r.voiceReady ? 'ok' : 'warn') }, h('span', { class: 'dot' }), r.voiceReady ? `${r.voices} voices` : 'Voices starting'));
     } catch (e) { /* ignore */ }
@@ -388,8 +401,13 @@
     const r = o.runtime;
     const gpu = (r.gpus || [])[0];
     const banners = [];
-    (r.problems || []).forEach(p => banners.push(h('div', { class: 'banner bad' }, p)));
-    if (!r.llmReady) banners.push(h('div', { class: 'banner' }, 'The villager brain (LLM) is still starting. Villagers will answer once it is ready.'));
+    if (r.setupNeeded) {
+      banners.push(h('div', { class: 'banner row' }, h('span', { class: 'spacer' }, 'The villagers\' AI isn\'t installed yet. Download it in one click on the Models page.'),
+        h('a', { class: 'btn primary', href: '#/models' }, icon('download'), 'Set up')));
+    } else {
+      (r.problems || []).forEach(p => banners.push(h('div', { class: 'banner bad' }, p)));
+      if (!r.llmReady) banners.push(h('div', { class: 'banner' }, 'The villager brain (LLM) is still starting. Villagers will answer once it is ready.'));
+    }
 
     const stat = (label, value, sub) => h('div', { class: 'card stat' }, h('div', { class: 'label' }, label), h('div', { class: 'value num' }, value), h('div', { class: 'sub' }, sub));
     const stats = h('div', { class: 'grid g-4' },
@@ -410,13 +428,13 @@
     onLeave(() => feedListeners.delete(onEv));
 
     const talkers = h('div', { class: 'stack', style: { gap: '4px' } }, (o.topTalkers || []).length ? o.topTalkers.map(t =>
-      h('a', { class: 'who', href: '#/villager/' + t.uuid, style: { padding: '6px 0', color: 'inherit' } }, avatar(t.name, t.kind),
+      h('a', { class: 'who', href: '#/villager/' + t.uuid, style: { padding: '6px 0', color: 'inherit' } }, avatar(t.name, t.kind, true, false, t.uuid),
         h('div', { style: { flex: 1, minWidth: 0 } }, h('b', null, t.name), h('div', { class: 'sub' }, [t.job, t.village].filter(Boolean).join(' · '))),
         h('span', { class: 'num secondary' }, fmt.format(t.talks)))) : h('div', { class: 'empty' }, 'No conversations yet'));
 
     const integrations = o.integrations || {};
     const integ = h('div', { class: 'row wrap' }, [
-      ['voicechat', 'Simple Voice Chat'], ['enTranslator', 'EN Translator'], ['mca', 'MCA Reborn'], ['minecolonies', 'MineColonies'], ['bluemap', 'BlueMap'],
+      ['voicechat', 'Simple Voice Chat'], ['sipher', 'Sipher'], ['mca', 'MCA Reborn'], ['minecolonies', 'MineColonies'], ['bluemap', 'BlueMap'],
     ].map(([k, label]) => h('span', { class: 'pill ' + (integrations[k] ? 'ok' : '') }, h('span', { class: 'dot' }), label + (integrations[k] ? '' : ' (not installed)'))));
 
     main.replaceChildren(h('div', { class: 'stack' }, banners, stats,
@@ -476,7 +494,7 @@
       const res = await api('/villagers?' + p + '&limit=300');
       count.textContent = `${fmt.format(res.total)} villager${res.total === 1 ? '' : 's'}`;
       tbody.replaceChildren(...(res.items.length ? res.items.map(v => h('tr', { onclick: () => location.hash = '#/villager/' + v.uuid, tabindex: 0, onkeydown: (e) => e.key === 'Enter' && (location.hash = '#/villager/' + v.uuid) },
-        h('td', null, h('div', { class: 'who' }, avatar(v.name, v.kind, v.alive === 1),
+        h('td', null, h('div', { class: 'who' }, avatar(v.name, v.kind, v.alive === 1, false, v.uuid),
           h('div', { style: { minWidth: 0 } }, h('b', null, v.name), h('div', { class: 'sub' }, [v.age_group !== 'adult' ? v.age_group : null, v.gender === 'f' ? 'female' : v.gender === 'm' ? 'male' : null, v.alive ? null : 'deceased'].filter(Boolean).join(' · '))))),
         h('td', null, kindTag(v.kind)),
         h('td', null, cap(v.job || '–')),
@@ -498,7 +516,7 @@
     const v = await api('/villager/' + uuid);
     setTitle(v.name, [h('a', { href: '#/villagers' }, 'Villagers'), v.village ? h('a', { href: '#/village/' + encodeURIComponent(v.village_key) }, v.village) : null].filter(Boolean));
     const extra = v.extra_json || {};
-    const hero = h('section', { class: 'card hero' }, avatar(v.name, v.kind, v.alive === 1, true),
+    const hero = h('section', { class: 'card hero' }, avatar(v.name, v.kind, v.alive === 1, true, v.uuid),
       h('div', { class: 'info' },
         h('div', { class: 'row wrap' }, h('h1', null, v.name), kindTag(v.kind), v.alive ? null : h('span', { class: 'tag dead' }, 'deceased'), v.loaded ? h('span', { class: 'pill ok' }, h('span', { class: 'dot' }), 'loaded in world') : null),
         h('div', { class: 'meta' },
@@ -598,6 +616,7 @@
             h('button', { class: 'btn', onclick: () => previewVoice(voice.value, +pitch.value, +speed.value, `Hrmm. I'm ${name.value.split(' ')[0]}. ${quirk.value ? 'You know, I ' + quirk.value + '.' : ''}`) }, icon('play'), 'Preview'),
             h('span', { class: 'spacer' }), save))),
       h('div', { class: 'stack' },
+        v.expressiveVoices ? voiceCard(v, name) : null,
         h('section', { class: 'card' }, h('header', null, h('h2', null, 'Talk to them')), h('div', { class: 'body stack' }, h('div', { class: 'row' }, ask, askBtn),
           h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'The villager must be loaded (a player nearby). They answer the nearest player out loud.'))),
         h('section', { class: 'card' }, h('header', null, h('h2', null, 'Facts')), h('div', { class: 'body' }, facts)),
@@ -606,6 +625,144 @@
             if (!confirm(`Make ${v.name} forget every memory and relationship? This can't be undone.`)) return;
             await api('/villager/' + v.uuid + '/forget', {}); toast('Memories wiped'); route();
           } }, 'Forget all memories'))))));
+  }
+
+  // ------------------------------------------------------------------------------------------------------------
+  // a villager's own voice: in-game preview, voice clips (upload or record)
+  // ------------------------------------------------------------------------------------------------------------
+  const CLONE_SCRIPT = 'The harvest came in early this year, so the whole village is in a good mood. Come by the market tomorrow, and I will have fresh bread and apples waiting for you.';
+
+  /** Any audio the browser can play -> 24 kHz mono 16-bit WAV (what the voice cloner wants), trimmed and levelled. */
+  async function toCloneWav(blob, maxSeconds = 25) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    let decoded;
+    try { decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); } finally { ctx.close(); }
+    const seconds = Math.min(decoded.duration, maxSeconds);
+    const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(seconds * 24000)), 24000);
+    const src = off.createBufferSource();
+    src.buffer = decoded;
+    src.connect(off.destination);
+    src.start();
+    const pcm = (await off.startRendering()).getChannelData(0);
+    let peak = 0;
+    for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+    const gain = peak > 0 ? Math.min(8, 0.89 / peak) : 1;
+    const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+    const str = (at, t) => [...t].forEach((c, i) => out.setUint8(at + i, c.charCodeAt(0)));
+    str(0, 'RIFF'); out.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE');
+    str(12, 'fmt '); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+    out.setUint32(24, 24000, true); out.setUint32(28, 48000, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true);
+    str(36, 'data'); out.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i] * gain)) * 32767, true);
+    return { wav: new Blob([out.buffer], { type: 'audio/wav' }), seconds };
+  }
+
+  async function playFrom(path, body) {
+    if (currentAudio) currentAudio.pause();
+    const blob = await api(path, body);
+    currentAudio = new Audio(URL.createObjectURL(blob));
+    currentAudio.play();
+  }
+
+  function voiceCard(v, name) {
+    const first = () => (name.value || v.name).split(' ')[0];
+    const emotion = h('select', { class: 'input', style: { width: 'auto' }, 'aria-label': 'Mood' },
+      ['neutral', 'happy', 'angry', 'sad', 'scared'].map(e => h('option', { value: e }, e)));
+    const line = h('input', { class: 'input', placeholder: `Hrmm. I'm ${first()}. Welcome to the village, traveller.` });
+    const hear = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      hear.disabled = true;
+      try { toast('Generating...'); await playFrom('/villager/' + v.uuid + '/voice-preview', { text: line.value.trim() || undefined, emotion: emotion.value }); }
+      catch (e) { if (e instanceof AuthError) return showLogin(); toast('Could not play: ' + e.message); }
+      hear.disabled = false;
+    } }, icon('play'), 'Hear their in-game voice');
+
+    if (!v.voiceCloning) {
+      return h('section', { class: 'card' }, h('header', null, h('h2', null, 'Their voice')),
+        h('div', { class: 'body stack', style: { gap: '10px' } },
+          h('div', { class: 'row wrap' }, line, emotion, hear),
+          h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'To give villagers a voice of your own, install Qwen3-TTS voice cloning on the ',
+            h('a', { href: '#/models' }, 'Models'), ' page.')));
+    }
+
+    let prepared = null;
+    const status = h('div', { class: 'stack', style: { gap: '8px' } });
+    const renderStatus = () => {
+      const c = v.customVoice;
+      status.replaceChildren(c
+        ? h('div', { class: 'stack', style: { gap: '6px' } },
+            h('div', null, h('b', null, 'Speaking with your voice clip'), h('span', { class: 'muted' }, ` · ${c.seconds} s` + (c.transcript ? '' : ' · no transcript'))),
+            h('audio', { controls: true, preload: 'none', src: `/api/villager/${v.uuid}/voice-clip?t=${Date.now()}`, style: { width: '100%' } }),
+            h('div', null, h('button', { class: 'btn danger', type: 'button', onclick: async () => {
+              if (!confirm(`Go back to ${first()}'s designed voice?`)) return;
+              try { await api('/villager/' + v.uuid + '/voice-clip/remove', {}); v.customVoice = null; renderStatus(); toast('Back to the designed voice'); }
+              catch (e) { toast(e.message); }
+            } }, 'Remove clip')))
+        : h('div', { class: 'muted' }, `Speaking with a voice designed from ${first()}'s description. Upload or record a clip to use a real voice instead.`));
+    };
+    renderStatus();
+
+    const transcript = h('textarea', { class: 'input', rows: 2, placeholder: 'What is said in the clip, word for word (optional: makes the clone much closer)' });
+    const clipInfo = h('div', { class: 'row wrap', style: { gap: '8px' } });
+    const upload = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: async () => {
+      if (!prepared) return;
+      upload.disabled = true;
+      try {
+        const r = await fetch(`/api/villager/${v.uuid}/voice-clip?transcript=${encodeURIComponent(transcript.value.trim())}`,
+          { method: 'POST', headers: { 'X-TWT': '1', 'Content-Type': 'audio/wav' }, credentials: 'same-origin', body: prepared.wav });
+        if (r.status === 401) return showLogin();
+        const data = await r.json();
+        if (!r.ok || data.error) throw new Error(data.error || 'HTTP ' + r.status);
+        v.customVoice = { seconds: Math.round(prepared.seconds * 10) / 10, transcript: transcript.value.trim() };
+        prepared = null; clipInfo.replaceChildren(); renderStatus();
+        toast(`${first()} now speaks with this voice (new moods take a second the first time)`);
+      } catch (e) { toast('Upload failed: ' + e.message); upload.disabled = false; }
+    } }, 'Use this voice');
+    const prepare = async (blob, label) => {
+      try {
+        prepared = await toCloneWav(blob);
+        if (prepared.seconds < 2) throw new Error('that is too short: use 5 to 20 seconds of speech');
+        clipInfo.replaceChildren(h('span', { class: 'muted' }, `${label} · ${prepared.seconds.toFixed(1)} s`),
+          h('audio', { controls: true, src: URL.createObjectURL(prepared.wav), style: { height: '32px' } }));
+        upload.disabled = false;
+      } catch (e) { prepared = null; upload.disabled = true; toast('Could not read that audio: ' + e.message); }
+    };
+    const file = h('input', { type: 'file', accept: 'audio/*', style: { display: 'none' }, onchange: () => file.files[0] && prepare(file.files[0], file.files[0].name) });
+
+    let recorder = null;
+    const recordLabel = h('span', null, 'Record');
+    const record = h('button', { class: 'btn', type: 'button', onclick: async () => {
+      if (recorder) { recorder.stop(); return; }
+      if (!navigator.mediaDevices || !window.MediaRecorder) return toast('Recording needs the dashboard on localhost or https. Upload a file instead.');
+      try {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: false } });
+        const chunks = [];
+        recorder = new MediaRecorder(mic);
+        recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+        recorder.onstop = () => {
+          mic.getTracks().forEach(t => t.stop());
+          recorder = null; recordLabel.textContent = 'Record';
+          prepare(new Blob(chunks, { type: chunks[0] ? chunks[0].type : 'audio/webm' }), 'Recording');
+        };
+        recorder.start();
+        recordLabel.textContent = 'Stop recording';
+        if (!transcript.value.trim()) transcript.value = CLONE_SCRIPT;
+        setTimeout(() => recorder && recorder.stop(), 25000);
+      } catch (e) { toast('No microphone: ' + e.message); }
+    } }, recordLabel);
+
+    return h('section', { class: 'card' }, h('header', null, h('h2', null, 'Their voice')),
+      h('div', { class: 'body stack', style: { gap: '12px' } },
+        status,
+        h('div', { class: 'row wrap' }, line, emotion, hear),
+        h('details', null, h('summary', { style: { cursor: 'pointer', fontWeight: 600 } }, v.customVoice ? 'Use a different voice clip' : 'Use your own voice clip'),
+          h('div', { class: 'stack', style: { gap: '10px', marginTop: '10px' } },
+            h('div', { class: 'muted', style: { fontSize: '12.5px' } },
+              '5 to 20 seconds of one person speaking clearly, without music or background noise. Recording? Read this aloud: “' + CLONE_SCRIPT + '”'),
+            h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => file.click() }, 'Choose audio file...'), file, record),
+            clipInfo,
+            h('label', { class: 'field' }, 'Transcript', transcript),
+            h('div', { class: 'row wrap' }, upload,
+              h('span', { class: 'muted', style: { fontSize: '12.5px' } }, 'Only use a voice you have permission to use.'))))));
   }
 
   async function villagerConversations(uuid, body) {
@@ -771,7 +928,7 @@
         h('section', { class: 'card' }, h('header', null, h('h2', null, 'Residents')), h('div', { class: 'table-wrap' }, h('table', null,
           h('thead', null, h('tr', null, ['Name', 'Job', 'Personality', 'Mood', 'Talks'].map((l, i) => h('th', { class: i === 4 ? 'num' : '' }, l)))),
           h('tbody', null, residents.map(r => h('tr', { onclick: () => location.hash = '#/villager/' + r.uuid },
-            h('td', null, h('div', { class: 'who' }, avatar(r.name, r.kind, r.alive === 1), h('b', null, r.name))),
+            h('td', null, h('div', { class: 'who' }, avatar(r.name, r.kind, r.alive === 1, false, r.uuid), h('b', null, r.name))),
             h('td', null, cap(r.job || '–')), h('td', null, h('span', { class: 'tag' }, r.persona)), h('td', null, r.mood || h('span', { class: 'muted' }, '–')),
             h('td', { class: 'num' }, fmt.format(r.talks || 0)))))))),
         h('section', { class: 'card' }, h('header', null, h('h2', null, 'Village gossip')), h('div', { class: 'body feed' },
@@ -802,7 +959,7 @@
       h('section', { class: 'card' }, h('header', null, h('h2', null, 'How villagers feel about ' + p.name)), h('div', { class: 'table-wrap' }, rels.length ? h('table', null,
         h('thead', null, h('tr', null, ['Villager', 'Village', 'Feeling', 'Affinity', 'Hearts', 'Talks'].map((l, i) => h('th', { class: i >= 4 ? 'num' : '' }, l)))),
         h('tbody', null, rels.map(r => h('tr', { onclick: () => location.hash = '#/villager/' + r.villager_uuid },
-          h('td', null, h('div', { class: 'who' }, avatar(r.villager, r.kind, r.alive === 1), h('div', null, h('b', null, r.villager), h('div', { class: 'sub' }, [cap(r.job), r.relation].filter(Boolean).join(' · '))))),
+          h('td', null, h('div', { class: 'who' }, avatar(r.villager, r.kind, r.alive === 1, false, r.villager_uuid), h('div', null, h('b', null, r.villager), h('div', { class: 'sub' }, [cap(r.job), r.relation].filter(Boolean).join(' · '))))),
           h('td', null, r.village || '–'), h('td', null, feeling(r.affinity)), h('td', null, affinityBar(r.affinity)),
           h('td', { class: 'num' }, r.hearts == null ? '–' : fmt.format(r.hearts)), h('td', { class: 'num' }, fmt.format(r.talks)))))) : h('div', { class: 'empty' }, 'No relationships yet.'))),
       h('section', { class: 'card' }, h('header', null, h('h2', null, 'What villagers remember')), h('div', { class: 'body feed' },
@@ -859,161 +1016,21 @@
   async function viewMap(q) {
     setTitle('Map', ['They Will Talk']);
     const data = await api('/map');
-    const dims = [...new Set([...data.villagers.map(v => v.dimension), ...data.villages.map(v => v.dimension), ...data.players.map(p => p.dimension), 'minecraft:overworld'])];
-    const focusV = q.get('focus') && data.villagers.find(v => v.uuid === q.get('focus'));
-    let dim = q.get('dim') || (focusV ? focusV.dimension : 'minecraft:overworld');
-    let mode = q.get('mode') || 'schematic';
-    const wrap = h('div', { class: 'map-wrap' });
-    const dimSel = h('select', { class: 'input', style: { width: 'auto' }, 'aria-label': 'Dimension' }, dims.map(d => h('option', { value: d, selected: d === dim }, d.replace('minecraft:', ''))));
-    const seg = h('div', { class: 'seg' },
-      h('button', { class: mode === 'schematic' ? 'on' : '', onclick: () => { mode = 'schematic'; render(); } }, 'Villager map'),
-      h('button', { class: mode === 'bluemap' ? 'on' : '', onclick: () => { mode = 'bluemap'; render(); } }, 'BlueMap 3D'));
-    dimSel.onchange = () => { dim = dimSel.value; render(); };
-    main.replaceChildren(h('div', { class: 'filters' }, seg, dimSel, h('span', { class: 'spacer' }),
-      h('span', { class: 'muted' }, `${fmt.format(data.villagers.length)} villagers · ${fmt.format(data.villages.length)} villages · ${data.players.length} players online`)), wrap);
-
-    let center = focusV ? { x: focusV.x, z: focusV.z } : (q.get('x') ? { x: +q.get('x'), z: +q.get('z') } : null);
-    function blueMapUrl(x, z) {
-      const base = (data.bluemap.url || '').replace(/\/+$/, '');
-      const mapId = dim.split(':')[1] === 'the_nether' ? 'nether' : dim.split(':')[1] === 'the_end' ? 'end' : dim.split(':')[1];
-      return center || x != null ? `${base}/#${mapId}:${Math.round(x ?? center.x)}:64:${Math.round(z ?? center.z)}:120:0:0:0:0:flat` : `${base}/#${mapId}`;
+    const bm = data.bluemap || {};
+    if (!bm.installed || !bm.running) {
+      main.replaceChildren(h('div', { class: 'empty' }, !bm.installed
+        ? 'The map needs BlueMap. Install BlueMap on the server to see your world in 3D, with every talking villager on it.'
+        : 'BlueMap is installed but not running. It needs its resource download accepted: set accept-download: true in config/bluemap/core.conf and run /bluemap reload.'));
+      return;
     }
-    function render() {
-      seg.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', (i === 0) === (mode === 'schematic')));
-      if (mode === 'bluemap') {
-        if (!data.bluemap.installed) {
-          wrap.replaceChildren(h('div', { class: 'empty' }, 'BlueMap is not installed on this server. Install BlueMap to get a full 3D map here - the villager map works without it.'));
-          return;
-        }
-        wrap.replaceChildren(h('iframe', { src: blueMapUrl(), title: 'BlueMap', loading: 'lazy' }),
-          h('div', { class: 'map-tools' }, h('a', { class: 'btn', href: blueMapUrl(), target: '_blank', rel: 'noopener' }, icon('external'), 'Open BlueMap')));
-        return;
-      }
-      schematic();
-    }
-
-    function schematic() {
-      const canvas = h('canvas', { role: 'img', 'aria-label': 'Top-down map of villagers and villages' });
-      const panel = h('div', { class: 'map-panel', style: { display: 'none' } });
-      const legend = h('div', { class: 'map-legend' },
-        h('span', null, h('i', { style: { background: 'var(--kind-vanilla)' } }), 'Villager'),
-        h('span', null, h('i', { style: { background: 'var(--kind-mca)' } }), 'MCA'),
-        h('span', null, h('i', { style: { background: 'var(--kind-colony)' } }), 'Colonist'),
-        h('span', null, h('i', { style: { background: 'var(--kind-trader)', borderRadius: '2px', transform: 'rotate(45deg)' } }), 'Trader'),
-        h('span', null, h('i', { style: { border: '2px solid var(--ink-2)', background: 'transparent' } }), 'Village'),
-        h('span', null, '▲ Player'));
-      wrap.replaceChildren(canvas, legend, panel);
-      const ctx = canvas.getContext('2d');
-      const vs = data.villagers.filter(v => v.dimension === dim);
-      const vl = data.villages.filter(v => v.dimension === dim);
-      const ps = data.players.filter(p => p.dimension === dim);
-      const pts = [...vs.map(v => [v.x, v.z]), ...vl.map(v => [v.x, v.z]), ...ps.map(p => [p.x, p.z])];
-      let scale = 1, ox = 0, oz = 0; // screen = (world - o) * scale + size/2
-      function fit() {
-        const r = canvas.getBoundingClientRect();
-        if (center) { ox = center.x; oz = center.z; scale = 3; return; }
-        if (!pts.length) { ox = 0; oz = 0; scale = 1; return; }
-        const xs = pts.map(p => p[0]), zs = pts.map(p => p[1]);
-        const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
-        ox = (minX + maxX) / 2; oz = (minZ + maxZ) / 2;
-        scale = Math.min(6, Math.max(0.05, Math.min(r.width / Math.max(64, maxX - minX + 80), r.height / Math.max(64, maxZ - minZ + 80))));
-      }
-      const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-      let hover = null;
-      function toScreen(x, z) { const r = canvas.getBoundingClientRect(); return [(x - ox) * scale + r.width / 2, (z - oz) * scale + r.height / 2]; }
-      function draw() {
-        const r = canvas.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        if (canvas.width !== Math.round(r.width * dpr)) { canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr); }
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.fillStyle = css('--surface-1'); ctx.fillRect(0, 0, r.width, r.height);
-        // grid every N blocks (keeps ~80-160 px spacing)
-        let step = 16;
-        while (step * scale < 80) step *= 2;
-        ctx.strokeStyle = css('--grid'); ctx.lineWidth = 1; ctx.fillStyle = css('--ink-3'); ctx.font = '11px system-ui';
-        const x0 = ox - r.width / 2 / scale, x1 = ox + r.width / 2 / scale, z0 = oz - r.height / 2 / scale, z1 = oz + r.height / 2 / scale;
-        for (let gx = Math.ceil(x0 / step) * step; gx < x1; gx += step) { const [sx] = toScreen(gx, 0); ctx.beginPath(); ctx.moveTo(sx + .5, 0); ctx.lineTo(sx + .5, r.height); ctx.stroke(); ctx.fillText(gx, sx + 4, r.height - 6); }
-        for (let gz = Math.ceil(z0 / step) * step; gz < z1; gz += step) { const [, sz] = toScreen(0, gz); ctx.beginPath(); ctx.moveTo(0, sz + .5); ctx.lineTo(r.width, sz + .5); ctx.stroke(); ctx.fillText(gz, 4, sz - 4); }
-        // villages
-        vl.forEach(v => {
-          const [sx, sz] = toScreen(v.x, v.z);
-          const rad = Math.max(10, 48 * scale);
-          ctx.beginPath(); ctx.arc(sx, sz, rad, 0, Math.PI * 2);
-          ctx.strokeStyle = css('--ink-3'); ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
-          ctx.fillStyle = css('--ink-2'); ctx.font = '600 12.5px system-ui'; ctx.textAlign = 'center';
-          ctx.fillText(v.name, sx, sz - rad - 6); ctx.textAlign = 'left';
-        });
-        // villagers (8px dots, 2px surface ring)
-        const kindVar = { vanilla: '--kind-vanilla', mca: '--kind-mca', minecolonies: '--kind-colony', wandering_trader: '--kind-trader' };
-        vs.forEach(v => {
-          const [sx, sz] = toScreen(v.x, v.z);
-          if (sx < -10 || sz < -10 || sx > r.width + 10 || sz > r.height + 10) return;
-          const hot = hover && hover.uuid === v.uuid;
-          ctx.fillStyle = css(kindVar[v.kind] || '--kind-vanilla');
-          ctx.strokeStyle = css('--surface-1'); ctx.lineWidth = 2;
-          ctx.beginPath();
-          const rad = hot ? 6.5 : 4.5;
-          if (v.kind === 'wandering_trader') { ctx.moveTo(sx, sz - rad - 1); ctx.lineTo(sx + rad + 1, sz); ctx.lineTo(sx, sz + rad + 1); ctx.lineTo(sx - rad - 1, sz); ctx.closePath(); }
-          else ctx.arc(sx, sz, rad, 0, Math.PI * 2);
-          ctx.fill(); ctx.stroke();
-          if (scale > 2.2 || hot) { ctx.fillStyle = css('--ink'); ctx.font = '11.5px system-ui'; ctx.fillText(v.name.split(' ')[0], sx + 8, sz + 4); }
-        });
-        // players
-        ps.forEach(p => {
-          const [sx, sz] = toScreen(p.x, p.z);
-          ctx.fillStyle = css('--ink'); ctx.beginPath(); ctx.moveTo(sx, sz - 8); ctx.lineTo(sx + 7, sz + 6); ctx.lineTo(sx - 7, sz + 6); ctx.closePath(); ctx.fill();
-          ctx.font = '600 12px system-ui'; ctx.fillText(p.name, sx + 10, sz + 4);
-        });
-      }
-      function nearest(mx, mz) {
-        let best = null, bd = 14 * 14;
-        vs.forEach(v => { const [sx, sz] = toScreen(v.x, v.z); const d = (sx - mx) ** 2 + (sz - mz) ** 2; if (d < bd) { bd = d; best = v; } });
-        return best;
-      }
-      function openPanel(v) {
-        panel.style.display = '';
-        panel.replaceChildren(h('div', { class: 'who', style: { marginBottom: '10px' } }, avatar(v.name, v.kind), h('div', null, h('b', null, v.name), h('div', { class: 'sub' }, KIND_LABEL[v.kind]))),
-          h('dl', { class: 'kv' }, h('dt', null, 'Job'), h('dd', null, cap(v.job || '–')), h('dt', null, 'Village'), h('dd', null, v.village || '–'),
-            h('dt', null, 'Position'), h('dd', { class: 'num' }, `${Math.round(v.x)}, ${Math.round(v.y)}, ${Math.round(v.z)}`), h('dt', null, 'Talks'), h('dd', { class: 'num' }, v.talks)),
-          h('div', { class: 'row', style: { marginTop: '12px' } }, h('a', { class: 'btn primary', href: '#/villager/' + v.uuid }, 'Profile'),
-            data.bluemap.installed ? h('button', { class: 'btn', onclick: () => { center = { x: v.x, z: v.z }; mode = 'bluemap'; render(); } }, 'BlueMap') : null,
-            h('button', { class: 'btn', onclick: () => { panel.style.display = 'none'; } }, 'Close')));
-      }
-      let drag = null;
-      canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, ox, oz, moved: false }; canvas.setPointerCapture(e.pointerId); canvas.classList.add('drag'); });
-      canvas.addEventListener('pointermove', e => {
-        const b = canvas.getBoundingClientRect();
-        if (drag) {
-          const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-          if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-          ox = drag.ox - dx / scale; oz = drag.oz - dy / scale; draw(); return;
-        }
-        const v = nearest(e.clientX - b.left, e.clientY - b.top);
-        if (v !== hover) { hover = v; draw(); }
-        if (v) showTip(e, () => [h('b', null, v.name), h('div', { class: 'muted' }, [cap(v.job), v.village].filter(Boolean).join(' · '))]); else hideTip();
-      });
-      canvas.addEventListener('pointerup', e => {
-        canvas.classList.remove('drag');
-        const wasDrag = drag && drag.moved;
-        drag = null;
-        if (!wasDrag && hover) openPanel(hover);
-      });
-      canvas.addEventListener('pointerleave', () => { hideTip(); });
-      canvas.addEventListener('wheel', e => {
-        e.preventDefault();
-        const b = canvas.getBoundingClientRect();
-        const mx = e.clientX - b.left - b.width / 2, mz = e.clientY - b.top - b.height / 2;
-        const wx = ox + mx / scale, wz = oz + mz / scale;
-        scale = Math.min(24, Math.max(0.02, scale * (e.deltaY < 0 ? 1.2 : 1 / 1.2)));
-        ox = wx - mx / scale; oz = wz - mz / scale;
-        draw();
-      }, { passive: false });
-      const ro = new ResizeObserver(() => draw());
-      ro.observe(canvas);
-      onLeave(() => ro.disconnect());
-      requestAnimationFrame(() => { fit(); draw(); if (focusV) openPanel(focusV); });
-    }
-    render();
+    // "Show on map" links centre on a villager (?focus=uuid) or a place (?x=&z=&dim=); otherwise open on the villages.
+    const focus = q.get('focus') && data.villagers.find(v => v.uuid === q.get('focus'));
+    const home = data.villages.find(v => v.dimension === 'minecraft:overworld') || data.villagers.find(v => v.dimension === 'minecraft:overworld');
+    const place = focus || (q.get('x') != null ? { x: +q.get('x'), z: +q.get('z'), dimension: q.get('dim') || 'minecraft:overworld' } : home);
+    const dim = place ? place.dimension : 'minecraft:overworld';
+    const mapId = (bm.maps || {})[dim] || Object.values(bm.maps || {})[0] || 'world';
+    const at = place ? `:${Math.round(place.x)}:64:${Math.round(place.z)}:${focus ? 90 : 200}:0:0:0:0:flat` : '';
+    main.replaceChildren(h('div', { class: 'map-wrap' }, h('iframe', { src: `/bluemap/#${mapId}${at}`, title: 'BlueMap' })));
   }
 
   // ------------------------------------------------------------------------------------------------------------
@@ -1039,7 +1056,7 @@
     const voices = await api('/voices').catch(() => []);
     const gpu = (r.gpus || [])[0];
     const procCard = (p) => h('section', { class: 'card' },
-      h('header', null, h('h2', null, p.name === 'llm' ? 'Villager brain (llama.cpp)' : p.name === 'qwen-tts' ? 'Expressive voices (Qwen3-TTS)' : 'Fallback voices (Kokoro)'),
+      h('header', null, h('h2', null, { llm: 'Villager brain (llama.cpp)', 'qwen-tts': 'Expressive voices (Qwen3-TTS)', 'qwen-clone': 'Voice cloning (Qwen3-TTS Base)' }[p.name] || 'CPU voices (Kokoro)'),
         h('span', { class: 'pill ' + (p.state === 'READY' ? 'ok' : p.state === 'FAILED' ? 'bad' : 'warn') }, h('span', { class: 'dot' }), p.state.toLowerCase())),
       h('div', { class: 'body stack', style: { gap: '10px' } },
         h('dl', { class: 'kv' }, h('dt', null, 'PID'), h('dd', { class: 'num' }, p.pid > 0 ? p.pid : '–'),
@@ -1095,6 +1112,136 @@
             h('dl', { class: 'kv' }, Object.entries(r.config || {}).map(([k, v]) => [h('dt', null, k), h('dd', { class: 'mono' }, String(v))]),
               h('dt', null, 'runtimeDir'), h('dd', { class: 'mono' }, r.runtimeDir)),
             h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'Edit config/theywilltalk-common.toml and restart the AI to change these.'))))));
+  }
+
+  // ------------------------------------------------------------------------------------------------------------
+  // models: download and pick the AI programs, brains and voices
+  // ------------------------------------------------------------------------------------------------------------
+  const gb = (b) => b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB';
+  const UNCENSORED_WARNING = 'Uncensored models have their refusals removed: villagers can say offensive, crude or disturbing things, '
+    + 'especially with crude language on. Only use one where every player is fine with that. Continue?';
+  const RUNNING = ['QUEUED', 'DOWNLOADING', 'VERIFYING', 'UNPACKING'];
+
+  async function viewModels() {
+    setTitle('Models', ['They Will Talk']);
+    let data = await api('/models');
+    const root = h('div', { class: 'stack' });
+    main.replaceChildren(root);
+    let timer = null;
+    let alive = true;
+    onLeave(() => { alive = false; clearTimeout(timer); });
+
+    const poll = () => {
+      clearTimeout(timer);
+      if (!alive) return;
+      timer = setTimeout(async () => {
+        try { data = await api('/models'); render(); } catch (e) { /* retry on the next tick */ }
+        poll();
+      }, data.busy ? 1000 : 5000);
+    };
+    const act = async (path, body, question) => {
+      if (question && !confirm(question)) return;
+      try {
+        data = await api('/models/' + path, body);
+        render();
+        refreshStatus();
+      } catch (e) {
+        if (e instanceof AuthError) return showLogin();
+        toast(e.message);
+      }
+      poll();
+    };
+
+    const progress = (p) => {
+      const j = p.job;
+      if (!j) return null;
+      if (j.phase === 'FAILED') return h('div', { class: 'banner bad', style: { margin: 0 } }, 'Download failed: ' + j.error);
+      if (!RUNNING.includes(j.phase)) return null;
+      const pct = j.total ? Math.min(100, 100 * j.done / j.total) : 0;
+      const label = {
+        QUEUED: 'Waiting for the other downloads...',
+        DOWNLOADING: `${gb(j.done)} of ${gb(j.total)}` + (j.bytesPerSecond ? ` · ${gb(j.bytesPerSecond)}/s` : ''),
+        VERIFYING: 'Checking the download...',
+        UNPACKING: 'Unpacking...',
+      }[j.phase];
+      return h('div', { class: 'stack', style: { gap: '6px' } },
+        h('div', { class: 'meter' }, h('i', { style: { width: pct + '%' } })),
+        h('div', { class: 'row' }, h('span', { class: 'muted num', style: { fontSize: '12.5px' } }, label), h('span', { class: 'spacer' }),
+          h('button', { class: 'btn', onclick: () => act('cancel', { id: p.id }) }, 'Cancel')));
+    };
+
+    const card = (p) => {
+      const running = p.job && RUNNING.includes(p.job.phase);
+      const uncensored = p.tags.includes('uncensored');
+      const actions = [];
+      if (!p.installed && !p.available) {
+        actions.push(h('div', { class: 'muted', style: { fontSize: '12.5px' } }, p.unavailable || 'Not available on this platform.'));
+      } else if (!p.installed && p.blockedBy.length) {
+        actions.push(h('div', { class: 'muted', style: { fontSize: '12.5px' } }, `Needs the ${p.blockedBy.join(', ')}, which can't be downloaded yet.`));
+      } else if (!p.installed && !running) {
+        actions.push(h('button', { class: 'btn primary', onclick: () => act('install', { id: p.id }, uncensored ? UNCENSORED_WARNING : null) },
+          icon('download'), 'Download · ' + gb(p.size)));
+      }
+      if (p.installed && p.selectable && !p.active) {
+        actions.push(h('button', { class: 'btn primary', onclick: () => act('use', { id: p.id }, uncensored ? UNCENSORED_WARNING : null) }, 'Use this'));
+      }
+      if (p.installed && !running) {
+        actions.push(h('button', { class: 'btn danger', onclick: () => act('remove', { id: p.id }, `Delete ${p.name} from the server? You can download it again later.`) }, 'Remove'));
+      }
+      return h('section', { class: 'card' },
+        h('header', null, h('h2', null, p.name),
+          p.active ? h('span', { class: 'pill ok' }, h('span', { class: 'dot' }), 'In use')
+            : p.installed ? h('span', { class: 'pill' }, h('span', { class: 'dot' }), 'Installed') : null),
+        h('div', { class: 'body stack', style: { gap: '10px' } },
+          (p.tags.length ? h('div', { class: 'row' }, p.tags.includes('recommended') ? h('span', { class: 'tag' }, 'Recommended') : null,
+            uncensored ? h('span', { class: 'tag', style: { color: 'var(--critical)' } }, 'Uncensored') : null) : null),
+          h('div', null, p.summary),
+          h('div', { class: 'muted', style: { fontSize: '12.5px' } }, [p.size ? gb(p.size) : null, p.licence, p.source].filter(Boolean).join(' · ')),
+          progress(p),
+          actions.length ? h('div', { class: 'row wrap' }, actions) : null));
+    };
+
+    const group = (title, sub, id) => [
+      h('div', null, h('h2', null, title), h('div', { class: 'muted', style: { fontSize: '12.5px', marginTop: '2px' } }, sub)),
+      h('div', { class: 'grid g-2' }, data.packages.filter(p => p.group === id).map(card)),
+    ];
+
+    function render() {
+      const s = data.settings;
+      const setup = data.setupNeeded ? h('section', { class: 'card' },
+        h('header', null, h('h2', null, 'Set up the villagers\' AI')),
+        h('div', { class: 'body stack', style: { gap: '12px' } },
+          h('div', null, 'Villagers need a brain (a language model, run on your NVIDIA GPU by llama.cpp) and voices. ',
+            'The recommended setup is Gemma 4 E2B with the Kokoro voices, plus the expressive Qwen3-TTS voices where they are available. Nothing is downloaded until you click; ',
+            'every file comes from GitHub or Hugging Face and is checked against a pinned SHA-256 checksum.'),
+          h('div', { class: 'row wrap' },
+            h('button', { class: 'btn primary', disabled: data.busy || !data.recommendedBytes, onclick: () => act('install', { id: 'recommended' }) },
+              icon('download'), 'Install recommended · ' + gb(data.recommendedBytes)),
+            h('span', { class: 'muted', style: { fontSize: '12.5px' } }, data.freeBytes >= 0 ? gb(data.freeBytes) + ' free on this disk' : '')))) : null;
+
+      const crude = h('input', { type: 'checkbox', checked: s.crudeLanguage, onchange: (e) => act('settings', { crudeLanguage: e.target.checked }) });
+      const engine = h('select', { class: 'input', onchange: (e) => act('settings', { ttsEngine: e.target.value }) },
+        [['auto', 'Automatic (Qwen3-TTS when installed, else Kokoro)'], ['qwen3', 'Qwen3-TTS (GPU, expressive)'], ['kokoro', 'Kokoro (CPU)'], ['supertonic', 'Supertonic (CPU)']]
+          .map(([v, label]) => h('option', { value: v, selected: v === s.ttsEngine }, label)));
+      const behaviour = h('section', { class: 'card' }, h('header', null, h('h2', null, 'Behaviour')),
+        h('div', { class: 'body stack', style: { gap: '14px' } },
+          h('label', { class: 'row', style: { alignItems: 'flex-start', cursor: 'pointer' } }, crude,
+            h('div', null, h('b', null, 'Crude language'),
+              h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'Villagers may swear and be vulgar when it fits their mood and personality. Off keeps them clean. ',
+                'The standard Gemma models only swear mildly; pick an uncensored brain for strong language.'))),
+          h('label', { class: 'field' }, 'Voice engine', engine)));
+
+      root.replaceChildren(setup,
+        ...group('Villager brain', 'The language model villagers think with. Bigger is smarter but slower and needs more GPU memory.', 'brain'),
+        ...group('Voices', 'How villagers sound. Kokoro runs on the CPU; Qwen3-TTS acts out emotions on the GPU.', 'voices'),
+        ...group('Programs', 'What runs the models. Installed automatically with the first brain or voice that needs them.', 'programs'),
+        behaviour,
+        h('div', { class: 'muted', style: { fontSize: '12.5px' } }, `Runtime folder: ${data.runtimeDir} (${data.platform})`
+          + (data.freeBytes >= 0 ? ` · ${gb(data.freeBytes)} free` : '')));
+    }
+
+    render();
+    poll();
   }
 
   // ------------------------------------------------------------------------------------------------------------

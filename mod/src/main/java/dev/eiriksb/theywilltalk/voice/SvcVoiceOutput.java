@@ -61,7 +61,8 @@ final class SvcVoiceOutput implements VoiceOutput {
         private int waited;
 
         Stream(EntityAudioChannel channel) {
-            this.player = api.createAudioPlayer(channel, api.createEncoder(OpusEncoderMode.VOIP), this::next);
+            // AUDIO, not VOIP: the voices are clean full-band speech, which VOIP mode filters and thins out for noisy mics.
+            this.player = api.createAudioPlayer(channel, api.createEncoder(OpusEncoderMode.AUDIO), this::next);
             this.player.setOnStopped(() -> done = true);
         }
 

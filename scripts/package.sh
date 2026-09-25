@@ -2,11 +2,12 @@
 # Builds the all-in-one server bundle:  dist/TheyWillTalk-<version>-<platform>.zip
 #
 #   mods/theywilltalk-<version>.jar         the mod
-#   theywilltalk/runtime/...                llama.cpp + CUDA runtime, Qwen3-TTS server, voice server, all models
+#   theywilltalk/runtime/...                llama.cpp + CUDA runtime, Qwen3-TTS server, all models
 #   THEY-WILL-TALK.md                       server install guide
 #   THIRD_PARTY_NOTICES.md + licenses/
 #
-# Unzip it into the server folder (next to the server jar) and start the server. Nothing is downloaded at runtime.
+# For servers without internet: unzip it into the server folder and start the server; the dashboard's Models page then
+# has nothing left to download. (The voice server ships inside the mod jar.)
 #
 #   scripts/package.sh [linux-x64|windows-x64]
 set -euo pipefail
@@ -22,7 +23,7 @@ export JAVA_HOME="${JAVA_HOME:-$HOME/.local/opt/jdk-21}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 echo "== building the mod ($VERSION)"
-(cd "$ROOT" && ./gradlew -q :mod:build :voice-server:jar)
+(cd "$ROOT" && ./gradlew -q :mod:build)
 
 echo "== assembling the runtime"
 "$ROOT/scripts/fetch-runtime.sh" "$PLATFORM"
@@ -32,7 +33,6 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/mods" "$STAGE/theywilltalk/runtime" "$STAGE/licenses"
 cp "$ROOT/mod/build/libs/theywilltalk-$VERSION.jar" "$STAGE/mods/"
 cp -a "$ROOT/runtime/$PLATFORM" "$STAGE/theywilltalk/runtime/"
-cp -a "$ROOT/runtime/voice-server" "$STAGE/theywilltalk/runtime/"
 mkdir -p "$STAGE/theywilltalk/runtime/models"
 for d in llm qwentts tts; do
   [ -d "$ROOT/runtime/models/$d" ] && cp -aL "$ROOT/runtime/models/$d" "$STAGE/theywilltalk/runtime/models/"

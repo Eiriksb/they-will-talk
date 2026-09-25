@@ -10,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.function.Supplier;
 
 /**
@@ -40,34 +41,17 @@ public final class QwenTtsClient {
         return baseUrl.get() != null;
     }
 
+    /** The server's address, or null when it isn't running. */
+    public String baseUrl() {
+        return baseUrl.get();
+    }
+
+    /**
+     * @param instructions voice description (VoiceDesign model); must be null for a cloned {@code voice} (Base model)
+     */
     public Result stream(String text, String instructions, String voice, long seed, PcmSink sink) throws IOException, InterruptedException {
-        String base = baseUrl.get();
-        if (base == null) {
-            throw new IOException("Qwen3-TTS server is not running");
-        }
-        JsonObject body = new JsonObject();
-        body.addProperty("input", text);
-        body.addProperty("response_format", "pcm");
-        body.addProperty("language", "english");
-        if (instructions != null && !instructions.isBlank()) {
-            body.addProperty("instructions", instructions);
-        }
-        if (voice != null && !voice.isBlank()) {
-            body.addProperty("voice", voice);
-        }
-        if (seed >= 0) {
-            body.addProperty("seed", seed); // same seed per villager keeps their designed voice consistent
-        }
-        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/v1/audio/speech"))
-                .timeout(Duration.ofSeconds(60))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
-                .build();
         long t0 = System.nanoTime();
-        HttpResponse<InputStream> resp = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
-        if (resp.statusCode() != 200) {
-            throw new IOException("Qwen3-TTS HTTP " + resp.statusCode() + ": " + new String(resp.body().readAllBytes(), StandardCharsets.UTF_8));
-        }
+        HttpResponse<InputStream> resp = speech(text, instructions, voice, seed, "pcm");
         long first = -1;
         long samples = 0;
         byte[] buf = new byte[4800]; // 100 ms
@@ -102,5 +86,67 @@ public final class QwenTtsClient {
             }
         }
         return new Result(first, (System.nanoTime() - t0) / 1_000_000, samples);
+    }
+
+    /** A whole line as a 24 kHz WAV file (for voice reference clips). */
+    public byte[] wav(String text, String instructions, String voice, long seed) throws IOException, InterruptedException {
+        try (InputStream in = speech(text, instructions, voice, seed, "wav").body()) {
+            return in.readAllBytes();
+        }
+    }
+
+    /**
+     * Registers a cloned voice on a Base-model server. With {@code refText} (the words spoken in the clip) the model
+     * continues from the clip itself and takes on its delivery; without it only the speaker's timbre is used.
+     */
+    public void registerVoice(String name, byte[] wav, String refText) throws IOException, InterruptedException {
+        JsonObject body = new JsonObject();
+        body.addProperty("name", name);
+        body.addProperty("wav_b64", Base64.getEncoder().encodeToString(wav));
+        if (refText != null) {
+            body.addProperty("ref_text", refText);
+        }
+        HttpResponse<String> resp = http.send(post("/v1/audio/voices", body, Duration.ofSeconds(30)), HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) {
+            throw new IOException("Qwen3-TTS voice registration HTTP " + resp.statusCode() + ": " + resp.body());
+        }
+    }
+
+    private HttpResponse<InputStream> speech(String text, String instructions, String voice, long seed, String format)
+            throws IOException, InterruptedException {
+        JsonObject body = new JsonObject();
+        body.addProperty("input", text);
+        body.addProperty("response_format", format);
+        body.addProperty("language", "english");
+        if (instructions != null && !instructions.isBlank()) {
+            body.addProperty("instructions", instructions);
+        }
+        if (voice != null && !voice.isBlank()) {
+            body.addProperty("voice", voice);
+        }
+        if (seed >= 0) {
+            body.addProperty("seed", seed); // same seed per villager keeps their voice consistent
+        }
+        HttpResponse<InputStream> resp = http.send(post("/v1/audio/speech", body, Duration.ofSeconds(60)), HttpResponse.BodyHandlers.ofInputStream());
+        if (resp.statusCode() != 200) {
+            String err;
+            try (InputStream in = resp.body()) {
+                err = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            }
+            throw new IOException("Qwen3-TTS HTTP " + resp.statusCode() + ": " + err);
+        }
+        return resp;
+    }
+
+    private HttpRequest post(String path, JsonObject body, Duration timeout) throws IOException {
+        String base = baseUrl.get();
+        if (base == null) {
+            throw new IOException("Qwen3-TTS server is not running");
+        }
+        return HttpRequest.newBuilder(URI.create(base + path))
+                .timeout(timeout)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                .build();
     }
 }

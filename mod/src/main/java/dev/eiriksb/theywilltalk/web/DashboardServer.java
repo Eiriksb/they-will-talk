@@ -131,6 +131,12 @@ public final class DashboardServer {
                     return;
                 }
                 api.handle(ex, path.substring(4));
+            } else if (path.equals(BlueMapProxy.PREFIX) || path.startsWith(BlueMapProxy.PREFIX + "/")) {
+                if (!authorized(ex)) {
+                    sendJson(ex, 401, error("login required"));
+                    return;
+                }
+                BlueMapProxy.handle(ex);
             } else {
                 serveStatic(ex, path);
             }

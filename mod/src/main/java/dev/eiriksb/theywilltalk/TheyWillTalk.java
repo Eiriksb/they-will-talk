@@ -4,12 +4,15 @@ import dev.eiriksb.theywilltalk.ai.LlmClient;
 import dev.eiriksb.theywilltalk.ai.QwenTtsClient;
 import dev.eiriksb.theywilltalk.ai.TtsClient;
 import dev.eiriksb.theywilltalk.audio.SpeechRenderer;
+import dev.eiriksb.theywilltalk.audio.VoiceBank;
 import dev.eiriksb.theywilltalk.audio.VoiceOutput;
 import dev.eiriksb.theywilltalk.conversation.ConversationManager;
 import dev.eiriksb.theywilltalk.conversation.LiveFeed;
 import dev.eiriksb.theywilltalk.data.Database;
 import dev.eiriksb.theywilltalk.data.Store;
 import dev.eiriksb.theywilltalk.integration.Integrations;
+import dev.eiriksb.theywilltalk.integration.SipherBridge;
+import dev.eiriksb.theywilltalk.faces.VillagerFaces;
 import dev.eiriksb.theywilltalk.runtime.RuntimeManager;
 import dev.eiriksb.theywilltalk.villager.VanillaAdapter;
 import dev.eiriksb.theywilltalk.villager.VillagerFacts;
@@ -47,8 +50,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * They Will Talk - villagers answer players out loud using a local LLM and text-to-speech running on the server.
- * Server-side only: players need Simple Voice Chat (to hear voices) and EN Translator (to talk with their voice),
- * or can just type in chat.
+ * Server-side only: players need Simple Voice Chat (to hear voices) and Sipher (to talk with their voice), or can
+ * just type in chat.
  */
 @Mod(TheyWillTalk.MOD_ID)
 public final class TheyWillTalk {
@@ -70,6 +73,7 @@ public final class TheyWillTalk {
     private ConversationManager conversations;
     private DashboardServer dashboard;
     private Integrations integrations;
+    private VillagerFaces faces;
     private final LiveFeed feed = new LiveFeed();
     private final Deque<Entity> scanQueue = new ArrayDeque<>();
     private final Map<String, Long> eventCooldown = new ConcurrentHashMap<>();
@@ -86,6 +90,13 @@ public final class TheyWillTalk {
         NeoForge.EVENT_BUS.addListener(this::onDamage);
         NeoForge.EVENT_BUS.addListener(this::onDeath);
         NeoForge.EVENT_BUS.addListener(this::onTrade);
+        if (ModList.get().isLoaded("sipher")) {
+            try {
+                SipherBridge.register();
+            } catch (Throwable t) {
+                LOGGER.warn("Sipher integration failed to load (version mismatch?): {}", t.toString());
+            }
+        }
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             RuntimeManager r = runtime;
             if (r != null) {
@@ -94,7 +105,7 @@ public final class TheyWillTalk {
         }, "twt-shutdown"));
     }
 
-    // ---- static access for mixins / plugins ------------------------------------------------------------------
+    // ---- static access for integrations / plugins ------------------------------------------------------------
 
     public static TheyWillTalk get() {
         return instance;
@@ -138,8 +149,10 @@ public final class TheyWillTalk {
         llm = new LlmClient(() -> runtime.llmBaseUrl(), TwtConfig.PARALLEL_SLOTS.get());
         tts = new TtsClient(() -> runtime.voiceReady() ? runtime.voiceBaseUrl() : null);
         qwenTts = new QwenTtsClient(() -> runtime.qwenTtsBaseUrl());
-        speech = new SpeechRenderer(tts, qwenTts);
+        QwenTtsClient qwenClone = new QwenTtsClient(() -> runtime.qwenCloneBaseUrl());
+        speech = new SpeechRenderer(tts, qwenTts, new VoiceBank(worldData.resolve("voices"), qwenTts, qwenClone));
         villagers = new VillagerRegistry(store, tts);
+        faces = new VillagerFaces(gameDir, worldData.resolve("faces"));
         integrations = new Integrations();
         integrations.registerAdapters(villagers);
         villagers.addAdapter(new VanillaAdapter());
@@ -175,6 +188,9 @@ public final class TheyWillTalk {
         if (runtime != null) {
             runtime.stop();
         }
+        if (faces != null) {
+            faces.shutdown();
+        }
         if (database != null) {
             database.close();
             database = null;
@@ -207,6 +223,7 @@ public final class TheyWillTalk {
                 VillagerFacts f = villagers.facts(e, null);
                 villagers.profile(e, f);
                 store.saveFacts(f);
+                faces.update(e);
             }
         }
         if (ticks % 1200 == 0) {
@@ -336,6 +353,11 @@ public final class TheyWillTalk {
 
     public DashboardServer dashboard() {
         return dashboard;
+    }
+
+    /** Villagers' faces drawn from their skins (BlueMap markers, dashboard). */
+    public VillagerFaces faces() {
+        return faces;
     }
 
     public Integrations integrations() {
