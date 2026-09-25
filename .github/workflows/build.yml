@@ -1,0 +1,72 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # They Will Talk compiles against Sipher's PlayerCaptionEvent, and Sipher isn't published yet: build it from this
+  # commit. Bump it when They Will Talk needs something newer from Sipher.
+  SIPHER_REF: 87c3bea6e5573ca5c41ee4cc59c3696b2c5b9b3e
+
+jobs:
+  build:
+    name: Build jar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: Eiriksb/Sipher
+          ref: ${{ env.SIPHER_REF }}
+          path: sipher
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build Sipher (compile dependency)
+        working-directory: sipher
+        run: ./gradlew assemble
+      - name: Build They Will Talk
+        run: |
+          jar=$(ls sipher/build/libs/sipher-*.jar | grep -v -e sources -e javadoc | head -1)
+          ./gradlew :mod:build :voice-server:test -PsipherJar="$jar"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: theywilltalk-jar
+          path: mod/build/libs/theywilltalk-*.jar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: test-reports
+          path: |
+            mod/build/reports/tests
+            voice-server/build/reports/tests
+
+  # Pushing a tag like v0.2.0 publishes the jar as a GitHub release.
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: theywilltalk-jar
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.jar --repo "$GITHUB_REPOSITORY" --title "They Will Talk $GITHUB_REF_NAME" \
+            --notes "Server mod jar. Needs Simple Voice Chat, and Sipher for voice input; download the AI from the dashboard's Models page. See docs/SERVER_INSTALL.md."

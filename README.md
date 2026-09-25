@@ -106,7 +106,8 @@ server admin would.
 ## Packaging
 
 `./gradlew :mod:build` builds the mod jar (with the voice server inside); that's all a server needs, the rest comes
-from the Models page. For servers without internet access, an all-in-one bundle:
+from the Models page. GitHub Actions (`.github/workflows/build.yml`) builds it on every push, against Sipher at a pinned
+commit; download it from the run's artifacts, or push a `v*` tag to publish it as a release. For servers without internet access, an all-in-one bundle:
 
 ```bash
 scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.1.0-linux-x64.zip
