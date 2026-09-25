@@ -38,12 +38,12 @@ jobs:
         run: |
           jar=$(ls sipher/build/libs/sipher-*.jar | grep -v -e sources -e javadoc | head -1)
           ./gradlew :mod:build :voice-server:test -PsipherJar="$jar"
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: theywilltalk-jar
           path: mod/build/libs/theywilltalk-*.jar
           if-no-files-found: error
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: test-reports
@@ -60,7 +60,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
         with:
           name: theywilltalk-jar
           path: dist
