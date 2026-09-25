@@ -1,0 +1,163 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.147'
+}
+
+version = mod_version
+group = mod_group_id
+
+base { archivesName = mod_id }
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+// Which optional mods to load in the dev runs (./gradlew :mod:runServer -PwithMinecolonies=false ...)
+def withMca = (findProperty('withMca') ?: 'true').toBoolean()
+def withMinecolonies = (findProperty('withMinecolonies') ?: 'true').toBoolean()
+def withBluemap = (findProperty('withBluemap') ?: 'true').toBoolean()
+def withVoicechat = (findProperty('withVoicechat') ?: 'true').toBoolean()
+def withEnTranslator = (findProperty('withEnTranslator') ?: 'true').toBoolean()
+
+// Where the dev runs find the AI runtime (llama-server, voice-server, models). Assemble it with scripts/fetch-runtime.sh.
+def runtimeDir = rootProject.file('runtime').absolutePath
+def voiceServerJar = project(':voice-server').layout.buildDirectory.file('libs/voice-server.jar').get().asFile.absolutePath
+// EN Translator Core 1.0.21's Linux client ships its sherpa JNI library without the onnxruntime 1.17.1 it links
+// against; the dev clients load both from here (see scripts/dev-natives.sh). Not needed on servers or Windows.
+def enTranslatorNatives = rootProject.file('.cache/natives/en_translator-linux-x64').absolutePath
+
+repositories {
+    maven { url = 'https://maven.maxhenkel.de/repository/public' }
+    exclusiveContent {
+        forRepository { maven { url = 'https://api.modrinth.com/maven' } }
+        filter { includeGroup 'maven.modrinth' }
+    }
+    maven { url = 'https://ldtteam.jfrog.io/artifactory/modding/' }
+    maven { url = 'https://repo.bluecolored.de/releases' }
+    exclusiveContent {
+        forRepository { maven { url = 'https://cursemaven.com' } }
+        filter { includeGroup 'curse.maven' }
+    }
+    mavenCentral()
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    runs {
+        client {
+            client()
+            gameDirectory = rootProject.file('run/client')
+            systemProperty 'sherpa_onnx.native.path', enTranslatorNatives
+            systemProperty 'theywilltalk.runtimeDir', runtimeDir
+            systemProperty 'theywilltalk.voiceServerJar', voiceServerJar
+            jvmArguments.addAll '-Xmx6G'
+        }
+        // A client that joins the dev server straight away as "Eirik" (offline mode).
+        clientJoin {
+            client()
+            gameDirectory = rootProject.file('run/client')
+            programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:25565', '--username', 'Eirik'
+            systemProperty 'sherpa_onnx.native.path', enTranslatorNatives
+            jvmArguments.addAll '-Xmx4G'
+        }
+        server {
+            server()
+            gameDirectory = rootProject.file('run/server')
+            programArgument '--nogui'
+            systemProperty 'theywilltalk.dashboardNoAuth', 'true'
+            systemProperty 'theywilltalk.webDir', file('src/main/resources/assets/theywilltalk/web').absolutePath
+            systemProperty 'theywilltalk.runtimeDir', runtimeDir
+            systemProperty 'theywilltalk.voiceServerJar', voiceServerJar
+            jvmArguments.addAll '-Xmx6G'
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = rootProject.file('run/gametest')
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.INFO
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+dependencies {
+    // Bundled inside our jar (jar-in-jar): the database for villagers, memories and conversations.
+    jarJar(implementation("org.xerial:sqlite-jdbc:${sqlite_jdbc_version}"))
+    additionalRuntimeClasspath "org.xerial:sqlite-jdbc:${sqlite_jdbc_version}"
+
+    // Simple Voice Chat: villagers speak through entity audio channels.
+    compileOnly "de.maxhenkel.voicechat:voicechat-api:${voicechat_api_version}"
+    if (withVoicechat) localRuntime "maven.modrinth:simple-voice-chat:${voicechat_mod_version}"
+
+    // MCA Reborn 7.7.36 (names, personalities, moods, hearts, family trees, villages)
+    compileOnly "maven.modrinth:minecraft-comes-alive-reborn:S2Ln2tIn"
+    if (withMca) localRuntime "maven.modrinth:minecraft-comes-alive-reborn:S2Ln2tIn"
+
+    // MineColonies (citizens, jobs, happiness, colonies, families)
+    compileOnly("com.ldtteam:minecolonies:1.1.1397-1.21.1-snapshot") { transitive = false }
+    compileOnly("com.ldtteam:structurize:1.0.832-1.21.1-snapshot") { transitive = false }
+    if (withMinecolonies) {
+        localRuntime("com.ldtteam:minecolonies:1.1.1397-1.21.1-snapshot") { transitive = false }
+        localRuntime("com.ldtteam:structurize:1.0.833-1.21.1-snapshot") { transitive = false }
+        localRuntime("com.ldtteam:blockui:1.0.212-1.21.1-snapshot") { transitive = false }
+        localRuntime("com.ldtteam:domum-ornamentum:1.0.236-snapshot:main") { transitive = false }
+    }
+
+    // EN Translator Core (CurseForge 1524584): transcribes each player's voice on their own client and relays the
+    // (English) text through the server, where our mixin picks it up. Voice input for villagers depends on it.
+    if (withEnTranslator) localRuntime "curse.maven:en-translator-core-1524584:8005810"
+
+    // BlueMap (villager + village markers on the 3D web map)
+    compileOnly "de.bluecolored:bluemap-api:2.7.4"
+    if (withBluemap) localRuntime "maven.modrinth:bluemap:5.7-neoforge"
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from 'src/main/templates'
+    into 'build/generated/sources/modMetadata'
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+// The dev runs launch the voice server from its build output.
+tasks.matching { it.name in ['runServer', 'runClient'] }.configureEach { dependsOn ':voice-server:jar' }
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "dev.eiriksb.theywilltalk.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "EnTranslatorRelayMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -1,0 +1,494 @@
+{
+ "id": "kokoro",
+ "type": "kokoro",
+ "priority": 20,
+ "languages": [
+  "en"
+ ],
+ "voices": [
+  {
+   "name": "af_alloy",
+   "sid": 0,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "neutral calm"
+  },
+  {
+   "name": "af_aoede",
+   "sid": 1,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "soft gentle"
+  },
+  {
+   "name": "af_bella",
+   "sid": 2,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "bright lively energetic"
+  },
+  {
+   "name": "af_heart",
+   "sid": 3,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "warm friendly"
+  },
+  {
+   "name": "af_jessica",
+   "sid": 4,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "casual young"
+  },
+  {
+   "name": "af_kore",
+   "sid": 5,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "confident clear"
+  },
+  {
+   "name": "af_nicole",
+   "sid": 6,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "whispery soft shy"
+  },
+  {
+   "name": "af_nova",
+   "sid": 7,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "clear crisp"
+  },
+  {
+   "name": "af_river",
+   "sid": 8,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "relaxed calm"
+  },
+  {
+   "name": "af_sarah",
+   "sid": 9,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "mature steady"
+  },
+  {
+   "name": "af_sky",
+   "sid": 10,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "airy young"
+  },
+  {
+   "name": "am_adam",
+   "sid": 11,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "plain gruff"
+  },
+  {
+   "name": "am_echo",
+   "sid": 12,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "smooth calm"
+  },
+  {
+   "name": "am_eric",
+   "sid": 13,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "confident"
+  },
+  {
+   "name": "am_fenrir",
+   "sid": 14,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "strong bold"
+  },
+  {
+   "name": "am_liam",
+   "sid": 15,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "young friendly"
+  },
+  {
+   "name": "am_michael",
+   "sid": 16,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "warm steady"
+  },
+  {
+   "name": "am_onyx",
+   "sid": 17,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "deep serious"
+  },
+  {
+   "name": "am_puck",
+   "sid": 18,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "playful mischievous"
+  },
+  {
+   "name": "am_santa",
+   "sid": 19,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "old jolly"
+  },
+  {
+   "name": "bf_alice",
+   "sid": 20,
+   "gender": "f",
+   "lang": "en-gb",
+   "traits": "prim proper"
+  },
+  {
+   "name": "bf_emma",
+   "sid": 21,
+   "gender": "f",
+   "lang": "en-gb",
+   "traits": "warm posh"
+  },
+  {
+   "name": "bf_isabella",
+   "sid": 22,
+   "gender": "f",
+   "lang": "en-gb",
+   "traits": "elegant"
+  },
+  {
+   "name": "bf_lily",
+   "sid": 23,
+   "gender": "f",
+   "lang": "en-gb",
+   "traits": "young gentle"
+  },
+  {
+   "name": "bm_daniel",
+   "sid": 24,
+   "gender": "m",
+   "lang": "en-gb",
+   "traits": "calm polite"
+  },
+  {
+   "name": "bm_fable",
+   "sid": 25,
+   "gender": "m",
+   "lang": "en-gb",
+   "traits": "storyteller wise"
+  },
+  {
+   "name": "bm_george",
+   "sid": 26,
+   "gender": "m",
+   "lang": "en-gb",
+   "traits": "old distinguished"
+  },
+  {
+   "name": "bm_lewis",
+   "sid": 27,
+   "gender": "m",
+   "lang": "en-gb",
+   "traits": "gruff rough"
+  }
+ ],
+ "blends": [
+  {
+   "sid": 28,
+   "name": "mix_michael_onyx",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "deep warm",
+   "mix": {
+    "am_michael": 0.6,
+    "am_onyx": 0.4
+   }
+  },
+  {
+   "sid": 29,
+   "name": "mix_adam_lewis",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "gruff rough",
+   "mix": {
+    "am_adam": 0.5,
+    "bm_lewis": 0.5
+   }
+  },
+  {
+   "sid": 30,
+   "name": "mix_santa_george",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "old wise",
+   "mix": {
+    "am_santa": 0.6,
+    "bm_george": 0.4
+   }
+  },
+  {
+   "sid": 31,
+   "name": "mix_puck_liam",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "young playful",
+   "mix": {
+    "am_puck": 0.6,
+    "am_liam": 0.4
+   }
+  },
+  {
+   "sid": 32,
+   "name": "mix_fenrir_onyx",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "strong deep",
+   "mix": {
+    "am_fenrir": 0.6,
+    "am_onyx": 0.4
+   }
+  },
+  {
+   "sid": 33,
+   "name": "mix_fable_echo",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "storyteller calm",
+   "mix": {
+    "bm_fable": 0.6,
+    "am_echo": 0.4
+   }
+  },
+  {
+   "sid": 34,
+   "name": "mix_eric_daniel",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "confident polite",
+   "mix": {
+    "am_eric": 0.5,
+    "bm_daniel": 0.5
+   }
+  },
+  {
+   "sid": 35,
+   "name": "mix_liam_echo",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "young smooth",
+   "mix": {
+    "am_liam": 0.6,
+    "am_echo": 0.4
+   }
+  },
+  {
+   "sid": 36,
+   "name": "mix_george_adam",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "old gruff",
+   "mix": {
+    "bm_george": 0.5,
+    "am_adam": 0.5
+   }
+  },
+  {
+   "sid": 37,
+   "name": "mix_puck_lewis",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "mischievous rough",
+   "mix": {
+    "am_puck": 0.5,
+    "bm_lewis": 0.5
+   }
+  },
+  {
+   "sid": 38,
+   "name": "mix_santa_fenrir",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "old bold",
+   "mix": {
+    "am_santa": 0.5,
+    "am_fenrir": 0.5
+   }
+  },
+  {
+   "sid": 39,
+   "name": "mix_daniel_michael",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "calm warm",
+   "mix": {
+    "bm_daniel": 0.6,
+    "am_michael": 0.4
+   }
+  },
+  {
+   "sid": 40,
+   "name": "mix_onyx_fable",
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "deep serious wise",
+   "mix": {
+    "am_onyx": 0.6,
+    "bm_fable": 0.4
+   }
+  },
+  {
+   "sid": 41,
+   "name": "mix_heart_emma",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "warm friendly",
+   "mix": {
+    "af_heart": 0.6,
+    "bf_emma": 0.4
+   }
+  },
+  {
+   "sid": 42,
+   "name": "mix_bella_sky",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "bright young",
+   "mix": {
+    "af_bella": 0.6,
+    "af_sky": 0.4
+   }
+  },
+  {
+   "sid": 43,
+   "name": "mix_nicole_aoede",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "soft shy",
+   "mix": {
+    "af_nicole": 0.6,
+    "af_aoede": 0.4
+   }
+  },
+  {
+   "sid": 44,
+   "name": "mix_sarah_alice",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "mature prim",
+   "mix": {
+    "af_sarah": 0.6,
+    "bf_alice": 0.4
+   }
+  },
+  {
+   "sid": 45,
+   "name": "mix_kore_nova",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "confident clear",
+   "mix": {
+    "af_kore": 0.5,
+    "af_nova": 0.5
+   }
+  },
+  {
+   "sid": 46,
+   "name": "mix_isabella_river",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "elegant calm",
+   "mix": {
+    "bf_isabella": 0.6,
+    "af_river": 0.4
+   }
+  },
+  {
+   "sid": 47,
+   "name": "mix_jessica_lily",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "young casual",
+   "mix": {
+    "af_jessica": 0.6,
+    "bf_lily": 0.4
+   }
+  },
+  {
+   "sid": 48,
+   "name": "mix_alloy_sarah",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "steady calm",
+   "mix": {
+    "af_alloy": 0.5,
+    "af_sarah": 0.5
+   }
+  },
+  {
+   "sid": 49,
+   "name": "mix_emma_kore",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "warm confident",
+   "mix": {
+    "bf_emma": 0.5,
+    "af_kore": 0.5
+   }
+  },
+  {
+   "sid": 50,
+   "name": "mix_sky_nicole",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "airy soft",
+   "mix": {
+    "af_sky": 0.5,
+    "af_nicole": 0.5
+   }
+  },
+  {
+   "sid": 51,
+   "name": "mix_alice_bella",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "prim lively",
+   "mix": {
+    "bf_alice": 0.6,
+    "af_bella": 0.4
+   }
+  },
+  {
+   "sid": 52,
+   "name": "mix_river_heart",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "relaxed warm",
+   "mix": {
+    "af_river": 0.6,
+    "af_heart": 0.4
+   }
+  },
+  {
+   "sid": 53,
+   "name": "mix_nova_lily",
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "crisp gentle",
+   "mix": {
+    "af_nova": 0.5,
+    "bf_lily": 0.5
+   }
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+plugins {
+    id 'java'
+}
+
+// The voice server is launched by the mod as a separate low-priority JVM process so a
+// native crash or CPU spike in the TTS engine can never take the Minecraft server down.
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+repositories {
+    mavenCentral()
+}
+
+def sherpaVersion = project.sherpa_onnx_version
+def sherpaBase = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaVersion}"
+def libsDir = file('libs')
+def sherpaJars = [
+        "sherpa-onnx-jvm-${sherpaVersion}.jar",
+        "sherpa-onnx-native-lib-linux-x64-${sherpaVersion}.jar",
+        "sherpa-onnx-native-lib-win-x64-${sherpaVersion}.jar",
+]
+
+// Build-time only: fetch the sherpa-onnx jars (Java API + bundled native libraries).
+tasks.register('fetchSherpa') {
+    outputs.dir libsDir
+    doLast {
+        libsDir.mkdirs()
+        sherpaJars.each { name ->
+            def target = new File(libsDir, name)
+            if (!target.exists() || target.length() == 0) {
+                logger.lifecycle("Downloading ${name}")
+                new URL("${sherpaBase}/${name}").withInputStream { i -> target.withOutputStream { it << i } }
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation files(sherpaJars.collect { new File(libsDir, it) })
+    implementation 'com.google.code.gson:gson:2.11.0'
+}
+
+tasks.named('compileJava') { dependsOn 'fetchSherpa' }
+
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+// Single self-contained jar: API classes, gson and the native libraries for linux + windows.
+tasks.named('jar', Jar) {
+    dependsOn 'fetchSherpa'
+    archiveFileName = 'voice-server.jar'
+    manifest { attributes 'Main-Class': 'dev.eiriksb.theywilltalk.voice.VoiceServer' }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } } {
+        exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'META-INF/MANIFEST.MF', 'module-info.class'
+    }
+}

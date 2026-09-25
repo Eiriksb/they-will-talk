@@ -1,0 +1,16 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = 'https://maven.neoforged.net/releases' }
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'they-will-talk'
+
+// mod          -> the NeoForge 1.21.1 server-side mod (theywilltalk.jar)
+// voice-server -> the text-to-speech sidecar the mod launches (runs the bundled voice models)
+include 'mod', 'voice-server'

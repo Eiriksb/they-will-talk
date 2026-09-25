@@ -1,0 +1,80 @@
+{
+ "id": "supertonic",
+ "type": "supertonic",
+ "priority": 10,
+ "languages": [
+  "en"
+ ],
+ "voices": [
+  {
+   "name": "M1",
+   "sid": 0,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "steady"
+  },
+  {
+   "name": "M2",
+   "sid": 1,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "deep"
+  },
+  {
+   "name": "M3",
+   "sid": 2,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "warm"
+  },
+  {
+   "name": "M4",
+   "sid": 3,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "young"
+  },
+  {
+   "name": "M5",
+   "sid": 4,
+   "gender": "m",
+   "lang": "en-us",
+   "traits": "gruff"
+  },
+  {
+   "name": "F1",
+   "sid": 5,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "warm"
+  },
+  {
+   "name": "F2",
+   "sid": 6,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "bright"
+  },
+  {
+   "name": "F3",
+   "sid": 7,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "calm"
+  },
+  {
+   "name": "F4",
+   "sid": 8,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "young"
+  },
+  {
+   "name": "F5",
+   "sid": 9,
+   "gender": "f",
+   "lang": "en-us",
+   "traits": "soft"
+  }
+ ]
+}
