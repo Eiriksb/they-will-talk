@@ -40,6 +40,11 @@ public final class SipherBridge {
     /** Server thread. */
     private static void onCaption(PlayerCaptionEvent event) {
         if (event.isPartial()) {
+            // The player is talking: the others hold off whatever they were about to add.
+            ConversationManager conversations = TheyWillTalk.conversations();
+            if (conversations != null) {
+                conversations.playerSpeaking(event.getPlayer(), event.getEnglish().isEmpty() ? event.getText() : event.getEnglish());
+            }
             return;
         }
         // Sipher leaves the English empty when the player spoke English (or no translation was available).

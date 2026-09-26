@@ -14,12 +14,31 @@ import dev.eiriksb.theywilltalk.villager.VillagerProfile;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /** Builds the LLM prompts: the villager persona, what it knows and remembers, and the conversation so far. */
 public final class PromptBuilder {
     private PromptBuilder() {}
 
-    public record Turn(String role, String text, String emotion) {}
+    /**
+     * A line of a conversation.
+     *
+     * @param role    "player" or "villager"
+     * @param speaker who said it, by name, in conversations with several villagers
+     * @param villager the villager who said it (null for the player, and in older one-to-one history)
+     */
+    public record Turn(String role, String text, String emotion, String speaker, UUID villager) {
+        public Turn(String role, String text, String emotion) {
+            this(role, text, emotion, null, null);
+        }
+    }
+
+    /**
+     * Another villager standing with the one who's talking, who hears everything and may chime in.
+     *
+     * @param about "the village archer, cheerful and upbeat; your wife; she likes Eirik"
+     */
+    public record Bystander(UUID uuid, String name, String about) {}
 
     public static String persona(VillagerProfile p, VillagerFacts f) {
         Persona persona = p.personaEnum();
@@ -143,7 +162,7 @@ public final class PromptBuilder {
     public static List<Message> conversation(VillagerProfile p, VillagerFacts f, String playerName, Store.Relationship rel,
                                              List<Store.Memory> memories, List<Store.Memory> gossip, List<String> world,
                                              List<Turn> history, String playerText, int maxWords, String language,
-                                             List<String> favours) {
+                                             List<String> favours, List<Bystander> others) {
         f.talkingAboutTrade = f.kind == VillagerKind.WANDERING_TRADER || aboutTrade(playerText, history);
         StringBuilder sys = new StringBuilder(persona(p, f));
         sys.append("\n# Right now\n");
@@ -170,6 +189,14 @@ public final class PromptBuilder {
             sys.append("Favours between you:\n");
             favours.forEach(l -> sys.append("- ").append(l).append('\n'));
         }
+        if (!others.isEmpty()) {
+            sys.append("\n# Who else is here\n");
+            for (Bystander b : others) {
+                sys.append("- ").append(b.name()).append(": ").append(b.about()).append('\n');
+            }
+            sys.append("They're standing with you and ").append(playerName).append(", hear everything and may chime in. ")
+                    .append("You can talk to them too, and react to what they say.\n");
+        }
         sys.append("""
 
                 # How to answer
@@ -185,17 +212,31 @@ public final class PromptBuilder {
                 - %s
                 """.formatted(playerName, p.firstName(), language, maxWords, emotionTags(), playerName, languageRule()));
 
+        // With other villagers around, everyone else's lines are "Name: text" so the model knows who said what.
+        boolean group = !others.isEmpty() || history.stream().anyMatch(t -> t.villager() != null && !t.villager().equals(p.uuid()));
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.system(sys.toString()));
         for (Turn t : history) {
-            if (t.role().equals("player")) {
-                msgs.add(Message.user(t.text()));
+            boolean mine = t.role().equals("villager") && (t.villager() == null || t.villager().equals(p.uuid()));
+            if (mine) {
+                add(msgs, Message.assistant("[" + (t.emotion() == null ? "neutral" : t.emotion()) + "] " + t.text()));
             } else {
-                msgs.add(Message.assistant("[" + (t.emotion() == null ? "neutral" : t.emotion()) + "] " + t.text()));
+                String who = t.role().equals("player") ? playerName : t.speaker();
+                add(msgs, Message.user(group && who != null ? who + ": " + t.text() : t.text()));
             }
         }
-        msgs.add(Message.user(playerText));
+        add(msgs, Message.user(group ? playerName + ": " + playerText : playerText));
         return msgs;
+    }
+
+    /** Some chat templates insist on user and assistant taking turns: lines in a row from the same side are joined. */
+    private static void add(List<Message> msgs, Message m) {
+        Message last = msgs.getLast();
+        if (msgs.size() > 1 && last.role().equals(m.role())) {
+            msgs.set(msgs.size() - 1, new Message(m.role(), last.content() + "\n" + m.content()));
+        } else {
+            msgs.add(m);
+        }
     }
 
     /** The crudeLanguage switch: clean by default, swearing allowed when an admin turns it on. */
@@ -313,7 +354,8 @@ public final class PromptBuilder {
         sys.append("\nSituation:\n");
         world.forEach(w -> sys.append("- ").append(w).append('\n'));
         if (nearbyPlayer != null) {
-            sys.append("- The player ").append(nearbyPlayer).append(" is walking nearby (they may gossip about them).\n");
+            sys.append("- The player ").append(nearbyPlayer).append(" is nearby: they may gossip about them, or turn to ").append(nearbyPlayer)
+                    .append(" and ask what they think.\n");
         }
         for (Store.Memory m : recentEvents) {
             sys.append("- Recent village news: ").append(m.villagerName() == null ? "" : m.villagerName() + ": ").append(m.text()).append('\n');
@@ -324,6 +366,78 @@ public final class PromptBuilder {
                 Make it characterful and funny: gossip, complaints, village life, the weather, trades, monsters. English only.
                 """).append(languageRule()).append('\n');
         return List.of(Message.system(sys.toString()), Message.user("Write the conversation now."));
+    }
+
+    // ---- group conversations: the others chime in ----------------------------------------------------------------
+
+    /** Someone taking part in a group conversation, for the chime-in prompt. */
+    public record Member(String name, String persona) {}
+
+    /** The others' lines, after rating how natural it is for them to speak up at all (the rating comes first). */
+    public static JsonObject chimeInSchema(List<String> names, int maxLines) {
+        JsonObject schema = ambientSchema();
+        JsonObject lines = schema.getAsJsonObject("properties").getAsJsonObject("lines");
+        lines.addProperty("minItems", 0);
+        lines.addProperty("maxItems", maxLines);
+        JsonObject speaker = lines.getAsJsonObject("items").getAsJsonObject("properties").getAsJsonObject("speaker");
+        JsonArray allowed = new JsonArray();
+        names.forEach(allowed::add);
+        speaker.add("enum", allowed);
+        JsonObject natural = new JsonObject();
+        natural.addProperty("type", "integer");
+        natural.addProperty("minimum", 0);
+        natural.addProperty("maximum", 10);
+        JsonObject props = new JsonObject();
+        props.add("natural", natural);
+        props.add("lines", lines);
+        schema.add("properties", props);
+        JsonArray req = new JsonArray();
+        req.add("natural");
+        req.add("lines");
+        schema.add("required", req);
+        return schema;
+    }
+
+    /**
+     * What the chosen others say after {@code speaker} answered the player, if it's natural for them to speak up.
+     *
+     * @param speaking   who may speak (usually one villager)
+     * @param answerBack whether {@code speaker} may answer them back once
+     * @param toEveryone the player spoke to all of them ("what do you two think?")
+     * @param recent     the conversation so far, the villager's answer last
+     */
+    public static List<Message> chimeIn(Member speaker, List<Member> speaking, List<Member> listening, String playerName,
+                                        List<Turn> recent, boolean toEveryone, boolean answerBack, String language) {
+        StringBuilder sys = new StringBuilder("You write what happens next in a conversation in a Minecraft village. ")
+                .append(playerName).append(" (a player) is talking with ").append(speaker.name()).append(", and others are standing with them.\n\n")
+                .append(speaker.name()).append(": ").append(speaker.persona()).append('\n');
+        for (Member m : speaking) {
+            sys.append(m.name()).append(": ").append(m.persona()).append('\n');
+        }
+        for (Member m : listening) {
+            sys.append(m.name()).append(": ").append(m.persona()).append(" (just listening)\n");
+        }
+        sys.append("\nConversation so far:\n");
+        for (Turn t : recent) {
+            sys.append(t.role().equals("player") ? playerName : t.speaker() == null ? speaker.name() : t.speaker())
+                    .append(": ").append(t.text()).append('\n');
+        }
+        String names = String.join(" and ", speaking.stream().map(Member::name).toList());
+        if (toEveryone) {
+            sys.append('\n').append(playerName).append(" spoke to all of them, so ").append(names)
+                    .append(" each answer briefly, in character. Rate \"natural\" 10.\n");
+        } else {
+            sys.append("""
+
+                    Would %s naturally say something right now? In a group, people let whoever was asked do the talking.                     Only speak up with a real reason: being mentioned, it concerns them or their family, or it's so like them                     they can't help it. React to the last thing said, not to earlier topics. Don't just agree or repeat what                     was said.
+                    First rate "natural": how natural it would be for %s to speak up now (0 = nobody would, 10 = they clearly would).                     If it's natural, write their one short line (at most 15 words); otherwise write no lines.
+                    """.formatted(names, names));
+            if (answerBack) {
+                sys.append(speaker.name()).append(" may answer back once, briefly, but only if the line calls for it.\n");
+            }
+        }
+        sys.append("Spoken words only, no narration. Speak ").append(language).append(". ").append(languageRule()).append('\n');
+        return List.of(Message.system(sys.toString()), Message.user("What happens next?"));
     }
 
     // ---- villagers taking the initiative ------------------------------------------------------------------------

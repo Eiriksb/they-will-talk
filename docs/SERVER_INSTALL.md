@@ -70,6 +70,9 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
 * Use **push-to-talk** or headphones: with open speakers and voice activation, the microphone can pick up villager
   voices (They Will Talk filters these echoes, but push-to-talk is nicer).
 * No mic? Type in chat while looking at a villager, or use `/twt talk <message>`.
+* Talk to villagers in a group: others standing with you listen in, and now and then speak up (when they're mentioned,
+  when it's about their family, or when they just can't help it). Look at one or say their name to talk to them; ask
+  "what do you all think?" to hear from everyone.
 * Villagers come to you: friends walk up to say hello or bring a small gift, and villagers ask for favours: bring them
   something, deal with some monsters, or take a letter to a neighbour. Say yes or no (or click [Accept]), and
   `/twt errands` lists what you've promised, how far along you are and where to find the villager. Bring the things
@@ -115,6 +118,7 @@ dashboard's own address, port and BlueMap URL, which are only in the file. The m
 * `llmModel`, `ttsEngine`, `crudeLanguage`, `bleepSwearing` - easiest to set on the dashboard's Models page.
   `llmModel` can also name any GGUF you drop into `theywilltalk/runtime/models/llm/` yourself.
 * `replyInPlayerLanguage`, `sipherBubbles` - villagers answering in the player's language, and their caption bubbles.
+* `groupConversations`, `groupSize` - other villagers joining a conversation.
 * `externalLlmUrl` - use your own OpenAI-compatible server (llama.cpp, Ollama, LM Studio...) instead of the built-in
   one.
 * `listenRadius`, `voiceDistance`, `requireLookOrName`, `activeConversationSeconds` - who hears what.

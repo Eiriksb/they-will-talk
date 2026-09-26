@@ -406,7 +406,9 @@ final class Api {
         JsonObject o = new JsonObject();
         JsonArray convs = rows("""
                 SELECT c.id, c.player_uuid, p.name AS player, c.started, c.ended, c.channel, c.turns FROM conversations c
-                LEFT JOIN players p ON p.uuid = c.player_uuid WHERE c.villager_uuid = ? ORDER BY c.started DESC LIMIT 60""", id);
+                LEFT JOIN players p ON p.uuid = c.player_uuid
+                WHERE c.villager_uuid = ? OR c.id IN (SELECT conversation_id FROM messages WHERE villager_uuid = ?)
+                ORDER BY c.started DESC LIMIT 60""", id, id);
         for (var e : convs) {
             JsonObject c = e.getAsJsonObject();
             c.add("messages", rows("SELECT ts, role, speaker, text, original_text, lang, emotion, latency_ms FROM messages WHERE conversation_id=? ORDER BY ts",

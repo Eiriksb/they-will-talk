@@ -59,7 +59,13 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
   remember; hitting, trading, killing villagers in front of others all become memories. MCA hearts and moods are
   updated through MCA's own API.
 * **Being lively.** Villagers stop and look at you, nod/shake their heads, show particles, and occasionally chat with
-  each other.
+  each other (sometimes asking a player nearby what they think).
+* **Talking in a group.** Villagers standing with you join the conversation: they know who else is there (and who's
+  family) and share the conversation so far. Like in a real group they mostly let whoever you asked do the talking
+  (`TurnTaking`): someone speaks up when they're mentioned, when it's family business, or when it's in their nature (a
+  gossip more than a shy villager), rarely twice in a row, never when you were just asked a question, and not once you
+  start talking. Their line is written while the answer still plays, and the LLM can still decide it wouldn't be
+  natural. Talk to any of them by looking at them or saying their name; "what do you all think?" gets everyone's answer.
 * **Taking the initiative.** Villagers walk up to players they want to talk to (`events/VillagerEvents`): to greet a
   friend, give a gift, ask a favour, or collect one that's done. Errands fit the villager: bring them something their
   job needs (`Needs`: wheat for a farmer, iron for a smith, flowers for a child), deal with some monsters, or take a
@@ -138,7 +144,7 @@ from the Models page. GitHub Actions (`.github/workflows/build.yml`) builds it o
 commit; download it from the run's artifacts, or push a `v*` tag to publish it as a release. For servers without internet access, an all-in-one bundle:
 
 ```bash
-scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.2.1-linux-x64.zip
+scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.2.2-linux-x64.zip
 ```
 
 The Qwen3-TTS server has no upstream binaries, so this project publishes its own (release `qwentts-6a3e912`). To

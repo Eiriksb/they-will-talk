@@ -45,6 +45,8 @@ public final class LlmClient {
     private final AtomicLong seq = new AtomicLong();
     private final List<Thread> workers;
     private volatile boolean running = true;
+    /** A server without llama.cpp's /apply-template and /completion (Ollama, LM Studio...): JSON goes through chat. */
+    private volatile String noRawCompletion;
 
     // stats for the dashboard
     public final AtomicLong requests = new AtomicLong();
@@ -108,14 +110,14 @@ public final class LlmClient {
         if (base == null) {
             throw new IOException("LLM server is not running");
         }
-        JsonObject body = new JsonObject();
-        JsonArray msgs = new JsonArray();
-        for (Message m : job.messages) {
-            JsonObject o = new JsonObject();
-            o.addProperty("role", m.role());
-            o.addProperty("content", m.content());
-            msgs.add(o);
+        JsonArray msgs = messages(job);
+        if (job.jsonSchema != null && !base.equals(noRawCompletion)) {
+            Result r = structured(base, job, msgs);
+            if (r != null) {
+                return r;
+            }
         }
+        JsonObject body = new JsonObject();
         body.add("messages", msgs);
         body.addProperty("stream", true);
         body.addProperty("temperature", job.temperature);
@@ -198,6 +200,66 @@ public final class LlmClient {
             lastTokensPerSecond = tokens * 1000.0 / genMs;
         }
         return new Result(text.toString(), first, total, tokens);
+    }
+
+    private static JsonArray messages(Job job) {
+        JsonArray msgs = new JsonArray();
+        for (Message m : job.messages) {
+            JsonObject o = new JsonObject();
+            o.addProperty("role", m.role());
+            o.addProperty("content", m.content());
+            msgs.add(o);
+        }
+        return msgs;
+    }
+
+    /**
+     * JSON answers through llama.cpp's raw completion: the schema's grammar holds from the very first token. Through the
+     * chat endpoint Gemma 4 sometimes "thinks" before the grammar kicks in, spends the whole token budget on it, and
+     * the answer comes back empty. Null when the server doesn't have these endpoints.
+     */
+    private Result structured(String base, Job job, JsonArray msgs) throws IOException, InterruptedException {
+        long t0 = System.nanoTime();
+        JsonObject tpl = new JsonObject();
+        tpl.add("messages", msgs);
+        JsonObject kwargs = new JsonObject();
+        kwargs.addProperty("enable_thinking", false);
+        tpl.add("chat_template_kwargs", kwargs);
+        HttpResponse<String> prompt = post(base + "/apply-template", tpl);
+        if (prompt.statusCode() == 404) {
+            noRawCompletion = base;
+            return null;
+        }
+        if (prompt.statusCode() != 200) {
+            throw new IOException("LLM HTTP " + prompt.statusCode() + ": " + prompt.body());
+        }
+        JsonObject body = new JsonObject();
+        body.addProperty("prompt", JsonParser.parseString(prompt.body()).getAsJsonObject().get("prompt").getAsString());
+        body.add("json_schema", job.jsonSchema);
+        body.addProperty("n_predict", job.maxTokens);
+        body.addProperty("temperature", job.temperature);
+        body.addProperty("top_p", 0.95);
+        body.addProperty("cache_prompt", true);
+        HttpResponse<String> resp = post(base + "/completion", body);
+        if (resp.statusCode() == 404) {
+            noRawCompletion = base;
+            return null;
+        }
+        if (resp.statusCode() != 200) {
+            throw new IOException("LLM HTTP " + resp.statusCode() + ": " + resp.body());
+        }
+        JsonObject out = JsonParser.parseString(resp.body()).getAsJsonObject();
+        int tokens = out.has("tokens_predicted") ? out.get("tokens_predicted").getAsInt() : 0;
+        requests.incrementAndGet();
+        tokensGenerated.addAndGet(tokens);
+        return new Result(out.get("content").getAsString(), -1, (System.nanoTime() - t0) / 1_000_000, tokens);
+    }
+
+    private HttpResponse<String> post(String url, JsonObject body) throws IOException, InterruptedException {
+        return http.send(HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(90))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8)).build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
     private static final class Job implements Comparable<Job> {

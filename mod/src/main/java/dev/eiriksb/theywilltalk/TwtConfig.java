@@ -35,6 +35,8 @@ public final class TwtConfig {
     public static final ModConfigSpec.BooleanValue BLEEP_SWEARING;
     public static final ModConfigSpec.BooleanValue REPLY_IN_PLAYER_LANGUAGE;
     public static final ModConfigSpec.BooleanValue SIPHER_BUBBLES;
+    public static final ModConfigSpec.BooleanValue GROUP_CONVERSATIONS;
+    public static final ModConfigSpec.IntValue GROUP_SIZE;
 
     // villagers
     public static final ModConfigSpec.BooleanValue VANILLA_VILLAGERS;
@@ -134,6 +136,10 @@ public final class TwtConfig {
         SIPHER_BUBBLES = b.comment("Show what villagers say as Sipher caption bubbles above them, translated into each player's reading language",
                         "when they have the language pack (players need Sipher).")
                 .define("sipherBubbles", true);
+        GROUP_CONVERSATIONS = b.comment("Villagers standing with you join the conversation: they chime in, tease each other and answer you.")
+                .define("groupConversations", true);
+        GROUP_SIZE = b.comment("At most this many other villagers join a conversation.")
+                .defineInRange("groupSize", 2, 1, 4);
         b.pop();
 
         b.comment("Which villagers can talk.").push("villagers");

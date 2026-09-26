@@ -388,7 +388,9 @@ public final class ConversationManager {
         if (words.isEmpty()) {
             return null;
         }
+        // "Marica, do you think Smajo would fight?" is for Marica: the name said first wins, then the nearest.
         Entity best = null;
+        int bestAt = Integer.MAX_VALUE;
         for (Entity e : candidates) {
             if (e.distanceTo(player) > radius) {
                 continue;
@@ -398,9 +400,10 @@ public final class ConversationManager {
             if (name == null || name.length() < 3) {
                 continue;
             }
-            String first = name.split(" ")[0].toLowerCase(Locale.ROOT);
-            if (words.contains(first) && (best == null || e.distanceToSqr(player) < best.distanceToSqr(player))) {
+            int at = words.indexOf(name.split(" ")[0].toLowerCase(Locale.ROOT));
+            if (at >= 0 && (at < bestAt || at == bestAt && e.distanceToSqr(player) < best.distanceToSqr(player))) {
                 best = e;
+                bestAt = at;
             }
         }
         return best;
@@ -429,12 +432,17 @@ public final class ConversationManager {
         Session session;
         if (player != null) {
             store.seenPlayer(pid, playerName);
-            session = sessions.compute(pid, (k, old) -> old != null && old.villager.equals(villager.getUUID())
+            session = sessions.compute(pid, (k, old) -> old != null && old.members.contains(villager.getUUID())
                     && System.currentTimeMillis() - old.lastActivity < 5 * 60_000L ? old : new Session(villager.getUUID()));
         } else {
             session = new Session(villager.getUUID());
         }
+        session.villager = villager.getUUID();
         session.lastActivity = System.currentTimeMillis();
+        Round playing = session.round;
+        if (playing != null) {
+            playing.cancel(); // something new is said: the others stop chiming in
+        }
         List<PromptBuilder.Turn> history;
         synchronized (session.history) {
             int n = TwtConfig.HISTORY_TURNS.get();
@@ -444,6 +452,19 @@ public final class ConversationManager {
         Turn turn = new Turn(villager, player, pid, playerName, text, channel, originalText, lang, facts, profile, adapter);
         turn.replyLang = replyLanguage(channel, lang, pid);
         turn.onSpoken = onSpoken;
+        if (player != null && TwtConfig.GROUP_CONVERSATIONS.get()
+                && (channel == Channel.VOICE || channel == Channel.TEXT || channel == Channel.COMMAND)) {
+            turn.joiners = joiners(villager, player, facts, profile);
+            for (Joiner j : turn.joiners) {
+                session.members.add(j.profile().uuid());
+                Entity e = j.entity().get();
+                Speaker js = e == null ? null : speakers.computeIfAbsent(e.getUUID(), u -> new Speaker(e));
+                if (js != null) { // they turn to the player and stay put while the conversation goes on
+                    js.attentionTarget = new WeakReference<>(player);
+                    js.attentionUntil = System.currentTimeMillis() + 20_000;
+                }
+            }
+        }
         Hooks h = hooks;
         if (h != null && player != null && channel != Channel.AMBIENT) {
             boolean heard = channel == Channel.VOICE || channel == Channel.TEXT || channel == Channel.COMMAND;
@@ -498,7 +519,7 @@ public final class ConversationManager {
             boolean ownLanguage = !turn.replyLang.equals(Languages.ENGLISH) && turn.originalText != null && !turn.originalText.isBlank();
             List<LlmClient.Message> messages = PromptBuilder.conversation(profile, turn.facts, turn.playerName, rel, memories, gossip,
                     world, history, ownLanguage ? turn.originalText : turn.text, TwtConfig.MAX_REPLY_WORDS.get(),
-                    Languages.name(turn.replyLang), turn.favours);
+                    Languages.name(turn.replyLang), turn.favours, turn.joiners.stream().map(Joiner::bystander).toList());
 
             VoiceOutput out = voice.get();
             VoiceOutput.SpeechStream stream = out.available() ? out.open(turn.villager.get(), TwtConfig.VOICE_DISTANCE.get().floatValue())
@@ -529,6 +550,39 @@ public final class ConversationManager {
             ss.finish();
             sentences.add(END);
             String fullReply = SentenceStream.clean(result.text());
+            // Whether anyone else speaks up, decided (and written) while the villager is still saying it.
+            CompletableFuture<LlmClient.Result> chimeIn = null;
+            Round round = null;
+            boolean toEveryone = TO_EVERYONE.matcher(turn.text).find();
+            TurnTaking.Decision decision = turn.joiners.isEmpty() || turn.cancelled || fullReply.isEmpty() ? TurnTaking.Decision.NOBODY
+                    : TurnTaking.decide(candidates(turn, history), turn.text, fullReply, toEveryone, session.turnsSinceChime,
+                    java.util.concurrent.ThreadLocalRandom.current());
+            if (!decision.speakers().isEmpty()) {
+                List<PromptBuilder.Turn> recent = new ArrayList<>(history.subList(Math.max(0, history.size() - 6), history.size()));
+                recent.add(new PromptBuilder.Turn("player", turn.text, null, turn.playerName, null));
+                recent.add(new PromptBuilder.Turn("villager", fullReply, ss.emotion(), profile.firstName(), vid));
+                java.util.Set<UUID> present = new java.util.HashSet<>();
+                turn.joiners.forEach(j -> present.add(j.profile().uuid()));
+                PromptBuilder.Member me = new PromptBuilder.Member(profile.firstName(), memberPersona(profile, turn.facts, turn.playerId,
+                        turn.playerName, present));
+                List<PromptBuilder.Member> speaking = new ArrayList<>();
+                List<PromptBuilder.Member> listening = new ArrayList<>();
+                for (Joiner j : turn.joiners) {
+                    (decision.speakers().contains(j.member().name()) ? speaking : listening).add(j.member());
+                }
+                List<String> names = new ArrayList<>(decision.speakers());
+                if (decision.answerBack()) {
+                    names.add(me.name());
+                }
+                round = new Round();
+                round.toEveryone = toEveryone;
+                session.round = round;
+                chimeIn = llm.chat(LlmClient.Priority.GREETING, PromptBuilder.chimeIn(me, speaking, listening, turn.playerName, recent,
+                                toEveryone, decision.answerBack(), Languages.name(turn.replyLang)), 0.9, 220,
+                        PromptBuilder.chimeInSchema(names, names.size()), null);
+            } else if (!scripted) {
+                session.turnsSinceChime++;
+            }
             if (!turn.cancelled && !fullReply.isEmpty()) {
                 server.execute(() -> {
                     Entity v = turn.villager.get();
@@ -546,15 +600,11 @@ public final class ConversationManager {
             turnsTotal++;
             store.addMessage(session.conversationId, vid, turn.playerId, "villager", profile.name(), reply, null, turn.replyLang, emotion,
                     turn.firstAudioMs);
-            if (!scripted) {
-                synchronized (session.history) {
-                    session.history.add(new PromptBuilder.Turn("player", turn.text, null));
-                    session.history.add(new PromptBuilder.Turn("villager", reply, emotion));
+            synchronized (session.history) {
+                if (!scripted) {
+                    session.history.add(new PromptBuilder.Turn("player", turn.text, null, turn.playerName, null));
                 }
-            } else {
-                synchronized (session.history) {
-                    session.history.add(new PromptBuilder.Turn("villager", reply, emotion));
-                }
+                session.history.add(new PromptBuilder.Turn("villager", reply, emotion, profile.firstName(), vid));
             }
             session.lastActivity = System.currentTimeMillis();
             store.villagerSpoke(vid);
@@ -589,6 +639,9 @@ public final class ConversationManager {
             if (turn.player != null && !scripted) {
                 reflect(turn, List.of(new PromptBuilder.Turn("player", turn.text, null), new PromptBuilder.Turn("villager", reply, emotion)));
             }
+            if (chimeIn != null) {
+                chimeIn(turn, session, round, chimeIn, stream);
+            }
         } catch (Exception e) {
             if (!turn.cancelled) {
                 TheyWillTalk.LOGGER.warn("Conversation with {} failed: {}", profile.name(), e.toString());
@@ -603,6 +656,271 @@ public final class ConversationManager {
             turn.sentences.add(END);
             server.execute(() -> finishTurn(sp, turn));
         }
+    }
+
+    // =========================================================================================================
+    // Several villagers in one conversation
+    // =========================================================================================================
+
+    /** How close to the player other villagers have to stand to join in. */
+    private static final double GROUP_RADIUS = 6;
+    /** The player talking to all of them: everyone answers. */
+    private static final Pattern TO_EVERYONE = Pattern.compile(
+            "(?iu)\\b(you (two|three|all|both|guys|lot)|both of you|all of you|every(one|body)|y'?all|guys|folks)\\b");
+
+    /** Villagers standing with the player who join the conversation, nearest first. Server thread. */
+    private List<Joiner> joiners(Entity villager, ServerPlayer player, VillagerFacts facts, VillagerProfile profile) {
+        List<Entity> near = new ArrayList<>(player.serverLevel().getEntities(player, player.getBoundingBox().inflate(GROUP_RADIUS),
+                e -> e != villager && villagers.canTalk(e) && e.distanceTo(player) <= GROUP_RADIUS && canJoin(e, player)));
+        if (near.isEmpty()) {
+            return List.of();
+        }
+        near.sort(java.util.Comparator.comparingDouble(e -> e.distanceToSqr(player)));
+        near = near.subList(0, Math.min(near.size(), TwtConfig.GROUP_SIZE.get()));
+        java.util.Set<UUID> everyone = new java.util.HashSet<>();
+        everyone.add(profile.uuid());
+        List<VillagerFacts> joinerFacts = new ArrayList<>();
+        List<VillagerProfile> joinerProfiles = new ArrayList<>();
+        for (Entity e : near) {
+            VillagerFacts f = villagers.facts(e, player);
+            VillagerProfile p = villagers.profile(e, f);
+            joinerFacts.add(f);
+            joinerProfiles.add(p);
+            everyone.add(p.uuid());
+        }
+        String playerName = player.getGameProfile().getName();
+        List<Joiner> out = new ArrayList<>();
+        for (int i = 0; i < near.size(); i++) {
+            VillagerProfile p = joinerProfiles.get(i);
+            VillagerFacts f = joinerFacts.get(i);
+            List<String> about = new ArrayList<>(List.of(describe(p, f)));
+            facts.family.stream().filter(l -> p.uuid().equals(l.uuid())).findFirst().ifPresent(l -> about.add("your " + l.relation()));
+            about.add(feeling(p.uuid(), player.getUUID(), playerName));
+            java.util.Set<UUID> others = new java.util.HashSet<>(everyone);
+            others.remove(p.uuid());
+            out.add(new Joiner(new WeakReference<>(near.get(i)), p, f, new PromptBuilder.Bystander(p.uuid(), p.name(), String.join("; ", about)),
+                    new PromptBuilder.Member(p.firstName(), memberPersona(p, f, player.getUUID(), playerName, others))));
+            Thread.ofVirtual().start(() -> speech.prepare(p, f, "neutral")); // their voice, before they need it
+        }
+        return out;
+    }
+
+    /** Free to join: awake, not trading, not talking to someone else or walking up to another player. */
+    private boolean canJoin(Entity e, ServerPlayer player) {
+        if (!e.isAlive() || e instanceof net.minecraft.world.entity.LivingEntity le && le.isSleeping()
+                || e instanceof net.minecraft.world.entity.npc.AbstractVillager av && av.isTrading()) {
+            return false;
+        }
+        Speaker sp = speakers.get(e.getUUID());
+        Turn t = sp == null ? null : sp.current;
+        Hooks h = hooks;
+        return (t == null || player.getUUID().equals(t.playerId)) && (h == null || !h.busy(e.getUUID()));
+    }
+
+    /** "cheerful farmer (relentlessly upbeat and optimistic)" */
+    private static String describe(VillagerProfile p, VillagerFacts f) {
+        boolean child = "child".equals(f.ageGroup) || "baby".equals(f.ageGroup);
+        String job = child ? "child" : f.job == null || f.job.isBlank() || f.job.startsWith("unemployed") || f.job.startsWith("nitwit")
+                ? "villager" : f.job;
+        return p.personaEnum().key.replace('_', ' ') + " " + job + " (" + p.personaEnum().description + ")"
+                + (f.mood == null ? "" : ", " + f.mood + " right now");
+    }
+
+    private String feeling(UUID villager, UUID player, String playerName) {
+        int a = affinity(villager, player);
+        return a >= 50 ? "adores " + playerName : a >= 15 ? "likes " + playerName : a <= -30 ? "can't stand " + playerName
+                : a <= -10 ? "doesn't like " + playerName : "neutral about " + playerName;
+    }
+
+    /** How the chime-in prompt sees someone: who they are, their family among the others, how they feel about the player. */
+    private String memberPersona(VillagerProfile p, VillagerFacts f, UUID player, String playerName, java.util.Set<UUID> present) {
+        List<String> bits = new ArrayList<>(List.of(describe(p, f)));
+        for (VillagerFacts.FamilyLink l : f.family) {
+            if (l.uuid() != null && present.contains(l.uuid())) {
+                bits.add(l.name() + " is their " + l.relation());
+            }
+        }
+        bits.add(feeling(p.uuid(), player, playerName));
+        return String.join("; ", bits);
+    }
+
+    private record GroupLine(Entity who, VillagerProfile profile, VillagerFacts facts, String emotion, String text) {}
+
+    /** The others' lines after a reply, spoken in their own voices once the villager has finished. Turn thread. */
+    private void chimeIn(Turn turn, Session session, Round round, CompletableFuture<LlmClient.Result> call, VoiceOutput.SpeechStream said) {
+        try {
+            String raw = call.get(20, TimeUnit.SECONDS).text();
+            TheyWillTalk.LOGGER.debug("[group] chime-in: {}", raw);
+            JsonObject answer = JsonParser.parseString(raw).getAsJsonObject();
+            // The model's own judgement is the last word: a forced remark is worse than none.
+            if (!round.toEveryone && answer.has("natural") && answer.get("natural").getAsInt() < 6) {
+                session.turnsSinceChime++;
+                return;
+            }
+            JsonArray lines = answer.getAsJsonArray("lines");
+            List<GroupLine> plan = new ArrayList<>();
+            for (JsonElement el : lines) {
+                JsonObject o = el.getAsJsonObject();
+                String who = o.get("speaker").getAsString();
+                String text = SentenceStream.clean(o.get("text").getAsString());
+                String emotion = o.get("emotion").getAsString();
+                if (text.isEmpty()) {
+                    continue;
+                }
+                if (who.equals(turn.profile.firstName())) {
+                    Entity v = turn.villager.get();
+                    if (!plan.isEmpty() && v != null) { // answering them back, never first
+                        plan.add(new GroupLine(v, turn.profile, turn.facts, emotion, text));
+                    }
+                    continue;
+                }
+                for (Joiner j : turn.joiners) {
+                    Entity e = j.entity().get();
+                    if (j.profile().firstName().equals(who) && e != null) {
+                        plan.add(new GroupLine(e, j.profile(), j.facts(), emotion, text));
+                        break;
+                    }
+                }
+            }
+            if (plan.isEmpty()) {
+                session.turnsSinceChime++;
+                return;
+            }
+            long giveUp = System.currentTimeMillis() + 30_000;
+            while (said.queuedMs() > 0 && !round.stopped() && !turn.cancelled && System.currentTimeMillis() < giveUp) {
+                Thread.sleep(100); // let the villager finish
+            }
+            pause(round, turn, 600, 1400);
+            session.turnsSinceChime = 0;
+            speakLines(plan, turn, session, round);
+        } catch (Exception e) {
+            TheyWillTalk.LOGGER.debug("The others didn't chime in: {}", e.toString());
+        } finally {
+            if (session.round == round) {
+                session.round = null;
+            }
+        }
+    }
+
+    private void speakLines(List<GroupLine> plan, Turn turn, Session session, Round round) throws InterruptedException {
+        VoiceOutput out = voice.get();
+        boolean audio = out.available();
+        String lang = turn.replyLang;
+        double range = TwtConfig.VOICE_DISTANCE.get();
+        CompletableFuture<short[]> next = audio ? render(plan.getFirst(), lang) : null;
+        for (int i = 0; i < plan.size() && !round.stopped() && !turn.cancelled; i++) {
+            GroupLine l = plan.get(i);
+            short[] pcm = null;
+            if (next != null) {
+                try {
+                    pcm = next.get(30, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    TheyWillTalk.LOGGER.debug("No voice for {}: {}", l.profile().firstName(), e.toString());
+                }
+            }
+            next = audio && i + 1 < plan.size() ? render(plan.get(i + 1), lang) : null; // the next line renders while this one plays
+            Entity who = l.who();
+            if (i > 0) {
+                pause(round, turn, 400, 1000);
+            }
+            if (!who.isAlive() || round.stopped() || turn.cancelled) {
+                continue;
+            }
+            // Joiners are "talking" while they say their line, so nothing else starts on them (the villager already is).
+            Speaker sp = speakers.computeIfAbsent(who.getUUID(), u -> new Speaker(who));
+            Turn held = null;
+            if (!who.getUUID().equals(turn.profile.uuid())) {
+                if (sp.current != null) {
+                    continue; // someone started talking to them
+                }
+                held = new Turn(who, turn.player, turn.playerId, turn.playerName, "", Channel.AMBIENT, null, lang, l.facts(), l.profile(),
+                        villagers.adapterFor(who));
+                sp.current = held;
+            }
+            long playMs = pcm != null ? pcm.length * 1000L / AudioDsp.SVC_RATE : l.text().length() * SPOKEN_MS_PER_CHAR;
+            rememberSpoken(who, l.text(), System.currentTimeMillis() + playMs + 500);
+            VillagerKind kind = l.facts().kind;
+            server.execute(() -> {
+                Gestures.react(who, kind, l.emotion());
+                subtitle(who, l.profile(), kind, l.text());
+                bubble(who, lang, l.text(), range);
+            });
+            if (pcm != null) {
+                VoiceOutput.SpeechStream stream = out.open(who, (float) range);
+                round.streams.add(stream);
+                if (held != null) {
+                    held.stream = stream;
+                }
+                stream.push(pcm);
+                stream.finish();
+            }
+            store.addMessage(session.conversationId, l.profile().uuid(), turn.playerId, "villager", l.profile().name(), l.text(), null, lang,
+                    l.emotion(), 0);
+            store.villagerSpoke(l.profile().uuid());
+            synchronized (session.history) {
+                session.history.add(new PromptBuilder.Turn("villager", l.text(), l.emotion(), l.profile().firstName(), l.profile().uuid()));
+            }
+            session.lastActivity = System.currentTimeMillis();
+            JsonObject ev = new JsonObject();
+            ev.addProperty("villager", l.profile().uuid().toString());
+            ev.addProperty("villagerName", l.profile().name());
+            ev.addProperty("player", turn.playerName);
+            ev.addProperty("text", l.text());
+            ev.addProperty("emotion", l.emotion());
+            ev.addProperty("latencyMs", 0);
+            ev.addProperty("tokensPerSecond", Math.round(llm.lastTokensPerSecond));
+            feed.publish("reply", ev);
+            long end = System.currentTimeMillis() + playMs;
+            while (System.currentTimeMillis() < end && !round.cancelled && !turn.cancelled && (held == null || !held.cancelled)) {
+                Thread.sleep(100);
+            }
+            if (held != null) {
+                Turn done = held;
+                server.execute(() -> finishTurn(sp, done));
+            }
+        }
+    }
+
+    /** A natural gap between speakers, cut short when the player starts talking. */
+    private static void pause(Round round, Turn turn, int minMs, int maxMs) throws InterruptedException {
+        long end = System.currentTimeMillis() + java.util.concurrent.ThreadLocalRandom.current().nextInt(minMs, maxMs);
+        while (System.currentTimeMillis() < end && !round.stopped() && !turn.cancelled) {
+            Thread.sleep(50);
+        }
+    }
+
+    /** The others as turn-taking sees them: personality, family, and whether they spoke lately. */
+    private static List<TurnTaking.Candidate> candidates(Turn turn, List<PromptBuilder.Turn> history) {
+        List<PromptBuilder.Turn> lately = history.subList(Math.max(0, history.size() - 4), history.size());
+        List<TurnTaking.Candidate> out = new ArrayList<>();
+        for (Joiner j : turn.joiners) {
+            UUID id = j.profile().uuid();
+            boolean family = turn.facts.family.stream().anyMatch(l -> id.equals(l.uuid()));
+            int talked = (int) lately.stream().filter(t -> id.equals(t.villager())).count();
+            out.add(new TurnTaking.Candidate(j.profile().firstName(), j.profile().personaEnum().key, family, talked));
+        }
+        return out;
+    }
+
+    /** The player started talking (a live caption): nobody else starts a line now. Server thread. */
+    public void playerSpeaking(ServerPlayer player, String text) {
+        Session s = sessions.get(player.getUUID());
+        Round r = s == null ? null : s.round;
+        if (r != null && !r.hold && echoOf(player, text) == null) { // not a villager's voice through their speakers
+            r.hold = true;
+        }
+    }
+
+    private CompletableFuture<short[]> render(GroupLine l, String language) {
+        CompletableFuture<short[]> f = new CompletableFuture<>();
+        Thread.ofVirtual().start(() -> {
+            try {
+                f.complete(speech.render(l.profile(), l.facts(), l.text(), l.emotion(), language));
+            } catch (Exception e) {
+                f.completeExceptionally(e);
+            }
+        });
+        return f;
     }
 
     /** Rough speaking rate of the voices (about 15 characters a second). */
@@ -885,7 +1203,7 @@ public final class ConversationManager {
             return; // spread chats out; checked every 2 seconds
         }
         Session s = sessions.get(player.getUUID());
-        if (s != null && now - s.lastActivity < 45_000) {
+        if (s != null && now - s.lastActivity < 45_000 || conversationNear(player)) {
             return;
         }
         List<Entity> near = player.serverLevel().getEntities(player, player.getBoundingBox().inflate(12), e -> villagers.canTalk(e) && idle(e));
@@ -900,6 +1218,18 @@ public final class ConversationManager {
                 }
             }
         }
+    }
+
+    /** Someone within earshot of the player is talking: two others striking up a chat would talk over them. */
+    private boolean conversationNear(ServerPlayer player) {
+        double range = TwtConfig.VOICE_DISTANCE.get();
+        for (Speaker sp : speakers.values()) {
+            Entity v = sp.entity.get();
+            if (sp.current != null && v != null && v.level() == player.level() && v.distanceTo(player) <= range) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean idle(Entity e) {
@@ -925,6 +1255,7 @@ public final class ConversationManager {
         sb.current = tb;
         String playerName = nearbyPlayer.getGameProfile().getName();
 
+        long chatStarted = System.currentTimeMillis();
         Thread.ofVirtual().name("twt-ambient").start(() -> {
             try {
                 List<Store.Memory> news = store.gossip(nearbyPlayer.getUUID(), fa.village == null ? null : fa.village.key(), new UUID(0, 0), 2)
@@ -934,8 +1265,10 @@ public final class ConversationManager {
                 JsonArray lines = JsonParser.parseString(r.text()).getAsJsonObject().getAsJsonArray("lines");
                 VoiceOutput out = voice.get();
                 List<String> transcript = new ArrayList<>();
+                List<PromptBuilder.Turn> said = new ArrayList<>();
                 for (JsonElement el : lines) {
-                    if (ta.cancelled || tb.cancelled) {
+                    if (ta.cancelled || tb.cancelled || lastTalk(nearbyPlayer.getUUID()) > chatStarted) {
+                        // the player started talking to someone: the chat trails off
                         break;
                     }
                     JsonObject line = el.getAsJsonObject();
@@ -949,6 +1282,7 @@ public final class ConversationManager {
                         continue;
                     }
                     transcript.add(prof.firstName() + ": " + text);
+                    said.add(new PromptBuilder.Turn("villager", text, emotion, prof.firstName(), prof.uuid()));
                     long playMs = 0;
                     if (out.available()) {
                         short[] pcm = speech.render(prof, facts, text, emotion);
@@ -965,6 +1299,15 @@ public final class ConversationManager {
                         bubble(who, Languages.ENGLISH, text, TwtConfig.VOICE_DISTANCE.get() * 0.75);
                     });
                     Thread.sleep(Math.max(1200, playMs + 350));
+                }
+                if (!said.isEmpty() && nearbyPlayer.isAlive() && nearbyPlayer.distanceTo(a) <= 10) {
+                    // The player overheard it: answering either of them carries on from here, and the other can chime in.
+                    Session scene = new Session(said.getLast().villager());
+                    scene.members.add(pa.uuid());
+                    scene.members.add(pb.uuid());
+                    scene.history.addAll(said);
+                    long now = System.currentTimeMillis();
+                    sessions.compute(nearbyPlayer.getUUID(), (k, old) -> old != null && now - old.lastActivity < 45_000 ? old : scene);
                 }
                 if (!transcript.isEmpty()) {
                     JsonObject ev = new JsonObject();
@@ -1052,15 +1395,45 @@ public final class ConversationManager {
     // =========================================================================================================
 
     private static final class Session {
-        final UUID villager;
+        /** the villager the player is talking to now */
+        volatile UUID villager;
+        /** everyone who's been part of the conversation (several villagers when others joined in) */
+        final java.util.Set<UUID> members = ConcurrentHashMap.newKeySet();
         final List<PromptBuilder.Turn> history = new ArrayList<>();
         volatile long lastActivity = System.currentTimeMillis();
         volatile long conversationId = -1;
+        /** the others chiming in after a reply, while they do */
+        volatile Round round;
+        /** player turns since someone last chimed in */
+        volatile int turnsSinceChime = 99;
 
         Session(UUID villager) {
             this.villager = villager;
+            members.add(villager);
         }
     }
+
+    /** The others' lines after a reply; stops when the player (or anyone in the conversation) starts something new. */
+    private static final class Round {
+        volatile boolean cancelled;
+        /** the player started talking: lines already playing finish, no new ones start */
+        volatile boolean hold;
+        volatile boolean toEveryone;
+        final List<VoiceOutput.SpeechStream> streams = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        boolean stopped() {
+            return cancelled || hold;
+        }
+
+        void cancel() {
+            cancelled = true;
+            streams.forEach(VoiceOutput.SpeechStream::cancel);
+        }
+    }
+
+    /** A villager standing with the one being talked to, who joins the conversation. */
+    private record Joiner(WeakReference<Entity> entity, VillagerProfile profile, VillagerFacts facts, PromptBuilder.Bystander bystander,
+                          PromptBuilder.Member member) {}
 
     private static final class Speaker {
         volatile WeakReference<Entity> entity;
@@ -1097,6 +1470,8 @@ public final class ConversationManager {
         /** What's going on between the villager and the player (errands), for the prompt. */
         volatile List<String> favours = List.of();
         volatile Consumer<String> onSpoken;
+        /** other villagers taking part in the conversation */
+        volatile List<Joiner> joiners = List.of();
         final BlockingQueue<String> sentences = new LinkedBlockingQueue<>();
 
         Turn(Entity villager, ServerPlayer player, UUID playerId, String playerName, String text, Channel channel, String originalText,
