@@ -4,10 +4,16 @@ import dev.eiriksb.theywilltalk.TheyWillTalk;
 import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.conversation.ConversationManager;
 import io.github.eiriksb.sipher.api.PlayerCaptionEvent;
+import io.github.eiriksb.sipher.api.SipherCaptions;
 import io.github.eiriksb.sipher.net.CaptionUpdatePayload;
 import io.github.eiriksb.sipher.server.CaptionRelay;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
 import net.neoforged.neoforge.common.NeoForge;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Voice input: Sipher transcribes each player's microphone on their own client, translates it to English and sends
@@ -17,6 +23,8 @@ import net.neoforged.neoforge.common.NeoForge;
 public final class SipherBridge {
     private static volatile long linesHeard;
     private static int relayLine;
+    private static final AtomicInteger captionLines = new AtomicInteger();
+    private static volatile boolean captionsUnavailable;
 
     private SipherBridge() {}
 
@@ -45,6 +53,27 @@ public final class SipherBridge {
             return;
         }
         conversations.hear(player, line, ConversationManager.Channel.VOICE, event.getText(), event.getLanguage());
+    }
+
+    /**
+     * Shows a villager's line as a Sipher bubble above them to the players in earshot; each player's Sipher translates it
+     * into their reading language when they have the pack. Server thread.
+     */
+    public static void caption(Entity speaker, String language, String text, double range) {
+        if (captionsUnavailable) {
+            return;
+        }
+        List<ServerPlayer> listeners = ((ServerLevel) speaker.level()).players().stream()
+                .filter(p -> p.distanceTo(speaker) <= range).map(p -> (ServerPlayer) p).toList();
+        if (listeners.isEmpty()) {
+            return;
+        }
+        try {
+            SipherCaptions.show(speaker, captionLines.incrementAndGet(), false, language, text, "", listeners);
+        } catch (LinkageError e) {
+            captionsUnavailable = true;
+            TheyWillTalk.LOGGER.info("This Sipher version can't show captions for villagers; update Sipher to get speech bubbles");
+        }
     }
 
     /**

@@ -20,6 +20,8 @@ final class FaceRenderer {
     static final int SCALE = 4;
     private static final int OUTLINE = 0xC8141414;
     private static final int NO_DYE = 0xFF000000;
+    private static final String CITIZEN_TEXTURES = "minecolonies:textures/entity/citizen/";
+    private static final String CITIZEN_ICONS = "minecolonies:textures/entity_icon/citizen/";
 
     private final FaceTextures textures;
 
@@ -32,6 +34,7 @@ final class FaceRenderer {
         Canvas face = switch (spec) {
             case FaceSpec.Villager v -> villager(v);
             case FaceSpec.Mca m -> mca(m);
+            case FaceSpec.Citizen c -> citizen(c);
         };
         if (face == null || face.empty()) {
             return Optional.empty();
@@ -56,6 +59,41 @@ final class FaceRenderer {
         layers.forEach(t -> c.cutout(t, 40, 8, 8, 10, 0, 0, -1));  // hat front
         layers.forEach(t -> c.cutout(t, 26, 2, 2, 4, 3, 7, -1));   // nose front
         return c;
+    }
+
+    /**
+     * A MineColonies citizen: MineColonies' own 16x16 face icon for their skin, else the head cut from the skin.
+     * Textures missing from the colony's style pack come from the default one, as in MineColonies.
+     */
+    private Canvas citizen(FaceSpec.Citizen s) {
+        String name = s.model() + (s.female() ? "female" : "male");
+        // How many variants the model has is only known to the client; count the default pack's files instead.
+        int variants = 0;
+        while (variants < 16 && textures.exists(CITIZEN_TEXTURES + "default/" + name + (variants + 1) + s.suffix() + ".png")) {
+            variants++;
+        }
+        if (variants == 0) {
+            return null;
+        }
+        String file = name + (Math.floorMod(s.textureId(), variants) + 1) + s.suffix() + ".png";
+        for (String style : List.of(s.style(), "default")) {
+            Optional<BufferedImage> icon = textures.image(CITIZEN_ICONS + style + "/" + file);
+            if (icon.isPresent()) {
+                Canvas c = new Canvas(16, 16, SCALE / 2);
+                c.cutout(icon.get(), 0, 0, 16, 16, 0, 0, -1);
+                return c;
+            }
+        }
+        for (String style : List.of(s.style(), "default")) {
+            Optional<BufferedImage> skin = textures.image(CITIZEN_TEXTURES + style + "/" + file);
+            if (skin.isPresent()) {
+                Canvas c = new Canvas(8, 8);
+                c.cutout(skin.get(), 8, 8, 8, 8, 0, 0, -1);   // head front
+                c.cutout(skin.get(), 40, 8, 8, 8, 0, 0, -1);  // hat front
+                return c;
+            }
+        }
+        return null;
     }
 
     /** MCA's layers in MCA's order: skin, face (eyes), clothing, hair; each on the 64x64 player head. */
@@ -194,20 +232,28 @@ final class FaceRenderer {
     static final class Canvas {
         final int w;
         final int h;
+        final int scale;
         final int[] px;
 
         Canvas(int w, int h) {
+            this(w, h, SCALE);
+        }
+
+        /** @param scale how big each pixel is in the icon */
+        Canvas(int w, int h, int scale) {
             this.w = w;
             this.h = h;
+            this.scale = scale;
             this.px = new int[w * h];
         }
 
         /**
          * Draws a region of a texture like the game's cutout render types: nearly transparent pixels are skipped,
-         * the rest drawn opaque. Textures bigger than 64x64 are sampled at the same relative spot.
+         * the rest drawn opaque. HD skins (taller than 64) are sampled at the same relative spot; wide 128x64
+         * skins (MineColonies) keep the usual layout.
          */
         void cutout(BufferedImage tex, int sx, int sy, int sw, int sh, int dx, int dy, int tint) {
-            int s = Math.max(1, tex.getWidth() / 64);
+            int s = Math.max(1, tex.getHeight() / 64);
             for (int y = 0; y < sh; y++) {
                 for (int x = 0; x < sw; x++) {
                     int tx = (sx + x) * s;
@@ -254,7 +300,7 @@ final class FaceRenderer {
         /** Scaled up with crisp pixels and a 2 px dark outline around the shape. */
         BufferedImage icon() {
             int pad = 2;
-            BufferedImage img = new BufferedImage(w * SCALE + 2 * pad, h * SCALE + 2 * pad, BufferedImage.TYPE_INT_ARGB);
+            BufferedImage img = new BufferedImage(w * scale + 2 * pad, h * scale + 2 * pad, BufferedImage.TYPE_INT_ARGB);
             for (int pass = 0; pass < 2; pass++) {
                 for (int y = 0; y < h; y++) {
                     for (int x = 0; x < w; x++) {
@@ -262,11 +308,11 @@ final class FaceRenderer {
                         if (p >>> 24 == 0) {
                             continue;
                         }
-                        int x0 = x * SCALE + pad;
-                        int y0 = y * SCALE + pad;
+                        int x0 = x * scale + pad;
+                        int y0 = y * scale + pad;
                         int grow = pass == 0 ? pad : 0;
-                        for (int yy = y0 - grow; yy < y0 + SCALE + grow; yy++) {
-                            for (int xx = x0 - grow; xx < x0 + SCALE + grow; xx++) {
+                        for (int yy = y0 - grow; yy < y0 + scale + grow; yy++) {
+                            for (int xx = x0 - grow; xx < x0 + scale + grow; xx++) {
                                 if (pass == 0) {
                                     if (img.getRGB(xx, yy) >>> 24 == 0) {
                                         img.setRGB(xx, yy, OUTLINE);

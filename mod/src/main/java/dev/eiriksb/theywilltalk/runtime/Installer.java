@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -84,6 +85,7 @@ public final class Installer {
     private final Platform platform;
     private final Catalog catalog;
     private final Supplier<Path> helperJar;
+    private final BooleanSupplier nvidia;
     private final Consumer<List<Package>> onInstalled;
     private final HttpClient http = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL)
             .connectTimeout(Duration.ofSeconds(20)).build();
@@ -95,20 +97,36 @@ public final class Installer {
 
     /**
      * @param helperJar   the voice server jar, which also unpacks archives
+     * @param nvidia      whether this machine has an NVIDIA GPU (CUDA packages) or not (Vulkan/CPU packages)
      * @param onInstalled called (off the server thread) with what got installed once the queue runs empty
      */
-    public Installer(Path runtimeDir, Platform platform, Catalog catalog, Supplier<Path> helperJar, Consumer<List<Package>> onInstalled) {
+    public Installer(Path runtimeDir, Platform platform, Catalog catalog, Supplier<Path> helperJar, BooleanSupplier nvidia,
+                     Consumer<List<Package>> onInstalled) {
         this.runtimeDir = runtimeDir;
         this.downloads = runtimeDir.resolve(".twt/downloads");
         this.staging = runtimeDir.resolve(".twt/staging");
         this.platform = platform;
         this.catalog = catalog;
         this.helperJar = helperJar;
+        this.nvidia = nvidia;
         this.onInstalled = onInstalled;
     }
 
     public boolean installed(Package pkg) {
         return !pkg.check().isEmpty() && pkg.check().stream().allMatch(c -> Files.exists(path(c)));
+    }
+
+    /** Whether a package is meant for this machine's GPU: CUDA ones need NVIDIA, Vulkan ones are for everything else. */
+    public boolean suitsGpu(Package pkg) {
+        boolean hasNvidia = nvidia.getAsBoolean();
+        return pkg.tagged("nvidia") ? hasNvidia : !pkg.tagged("vulkan") || !hasNvidia;
+    }
+
+    /** The package that fills a requirement: an installed one, else the downloadable one that suits this machine. */
+    public Package dependency(String requirement) {
+        List<Package> alternatives = catalog.alternatives(requirement);
+        return alternatives.stream().sorted(Comparator.comparing((Package p) -> !installed(p))
+                .thenComparing(p -> !p.available(platform)).thenComparing(p -> !suitsGpu(p))).findFirst().orElseThrow();
     }
 
     public synchronized Job job(String id) {
@@ -126,15 +144,15 @@ public final class Installer {
             throw new IllegalArgumentException(pkg.name() + " can't be downloaded on " + platform.id);
         }
         for (String req : pkg.requires()) {
-            Package dep = catalog.get(req).orElseThrow();
+            Package dep = dependency(req);
             if (!installed(dep) && !dep.available(platform)) {
                 throw new IllegalArgumentException(pkg.name() + " needs " + dep.name() + ", which can't be downloaded yet");
             }
         }
         for (String req : pkg.requires()) {
-            Package dep = catalog.get(req).orElseThrow();
+            Package dep = dependency(req);
             if (!installed(dep)) {
-                install(req);
+                install(dep.id());
             }
         }
         Job existing = jobs.get(id);
@@ -211,7 +229,7 @@ public final class Installer {
         Package pkg = job.pkg;
         try {
             for (String req : pkg.requires()) {
-                Package dep = catalog.get(req).orElseThrow();
+                Package dep = dependency(req);
                 if (!installed(dep)) {
                     throw new IOException("it needs " + dep.name() + ", which didn't install");
                 }

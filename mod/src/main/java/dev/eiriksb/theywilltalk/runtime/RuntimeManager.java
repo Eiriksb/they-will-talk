@@ -69,7 +69,7 @@ public final class RuntimeManager {
         this.qwen = new ManagedProcess("qwen-tts", logs.resolve("qwen-tts.log"));
         this.qwenClone = new ManagedProcess("qwen-clone", logs.resolve("qwen-clone.log"));
         this.voice = new ManagedProcess("voice", logs.resolve("voice.log"));
-        this.installer = new Installer(runtimeDir, platform, catalog, this::voiceServerJar, this::installed);
+        this.installer = new Installer(runtimeDir, platform, catalog, this::voiceServerJar, RuntimeManager::nvidia, this::installed);
     }
 
     static Path resolveRuntimeDir(Path gameDir) {
@@ -88,6 +88,8 @@ public final class RuntimeManager {
     public synchronized void start() {
         stop();
         running = true;
+        long generation = ++startGeneration;
+        Thread.ofVirtual().name("twt-designer-idle").start(() -> reapDesigner(generation));
         startLlm();
         startQwen();
         startVoice();
@@ -135,7 +137,10 @@ public final class RuntimeManager {
         List<String> cmd = List.of(bin.toString(), "-m", model.toString(), "--host", "127.0.0.1", "--port", Integer.toString(llmPort),
                 "-ngl", Integer.toString(TwtConfig.GPU_LAYERS.get()), "-c", Integer.toString(TwtConfig.CONTEXT_SIZE.get()),
                 "-np", Integer.toString(TwtConfig.PARALLEL_SLOTS.get()), "--jinja");
-        llm.start(niced(cmd), libraryPath(bin.getParent(), cudaDir()), bin.getParent(), health(llmPort, "/health"), Duration.ofMinutes(5));
+        // The Vulkan build must not pick up the CUDA libraries.
+        Map<String, String> env = bin.equals(llamaServer("llama")) ? libraryPath(bin.getParent(), cudaDir()) : libraryPath(bin.getParent());
+        TheyWillTalk.LOGGER.info("[llm] starting {} ({})", model.getFileName(), bin.getParent().getFileName());
+        llm.start(niced(cmd), env, bin.getParent(), health(llmPort, "/health"), Duration.ofMinutes(5));
     }
 
     private void awaitExternal(String url) {
@@ -161,27 +166,121 @@ public final class RuntimeManager {
         }
     }
 
+    /**
+     * Qwen3-TTS: with voice cloning the Base model speaks every line and the VoiceDesign model only designs new voices,
+     * so it starts on demand ({@link #ensureDesigner()}) and stops when idle; without cloning VoiceDesign speaks and
+     * runs all the time.
+     */
     private void startQwen() {
-        Path bin = runtimeDir.resolve(platform.id).resolve("qwentts").resolve("tts-server" + platform.exe);
+        Path bin = qwenServer();
         Path talker = selectQwenModel();
-        Path codec = firstFile(runtimeDir.resolve("models").resolve("qwentts"), "qwen-tokenizer-", ".gguf");
+        Path codec = qwenCodec();
         qwenModelFile = talker == null ? null : talker.getFileName().toString();
         if (!qwenWanted() || !Files.isRegularFile(bin) || talker == null || codec == null) {
             return;
         }
-        qwenPort = freePort();
-        List<String> cmd = List.of(bin.toString(), "--model", talker.toString(), "--codec", codec.toString(), "--host", "127.0.0.1",
-                "--port", Integer.toString(qwenPort), "--alias", "qwen3-tts", "--lang", "English");
-        qwen.start(niced(cmd), libraryPath(bin.getParent(), cudaDir()), bin.getParent(), health(qwenPort, "/health"), Duration.ofMinutes(3));
+        if (!designerOnDemand()) {
+            startDesigner();
+        }
 
         // Voice cloning: the Base model speaks every line in the villager's once-designed voice (see VoiceBank).
-        Path base = firstFile(runtimeDir.resolve("models").resolve("qwentts"), "qwen-talker-", "-base-");
+        Path base = qwenBaseModel();
         if (base != null) {
             qwenClonePort = freePort();
             List<String> clone = List.of(bin.toString(), "--model", base.toString(), "--codec", codec.toString(), "--host", "127.0.0.1",
                     "--port", Integer.toString(qwenClonePort), "--alias", "qwen3-tts-base", "--lang", "English");
             qwenClone.start(niced(clone), libraryPath(bin.getParent(), cudaDir()), bin.getParent(), health(qwenClonePort, "/health"),
                     Duration.ofMinutes(3));
+        }
+    }
+
+    private Path qwenServer() {
+        return runtimeDir.resolve(platform.id).resolve("qwentts").resolve("tts-server" + platform.exe);
+    }
+
+    private Path qwenCodec() {
+        return firstFile(runtimeDir.resolve("models").resolve("qwentts"), "qwen-tokenizer-", ".gguf");
+    }
+
+    private Path qwenBaseModel() {
+        return firstFile(runtimeDir.resolve("models").resolve("qwentts"), "qwen-talker-", "-base-");
+    }
+
+    private void startDesigner() {
+        Path bin = qwenServer();
+        Path talker = selectQwenModel();
+        Path codec = qwenCodec();
+        if (!Files.isRegularFile(bin) || talker == null || codec == null) {
+            return;
+        }
+        qwenPort = freePort();
+        List<String> cmd = List.of(bin.toString(), "--model", talker.toString(), "--codec", codec.toString(), "--host", "127.0.0.1",
+                "--port", Integer.toString(qwenPort), "--alias", "qwen3-tts", "--lang", "English");
+        qwen.start(niced(cmd), libraryPath(bin.getParent(), cudaDir()), bin.getParent(), health(qwenPort, "/health"), Duration.ofMinutes(3));
+    }
+
+    /** With voice cloning installed, VoiceDesign only runs while designing voices (saves about 1.5 GB of GPU memory). */
+    public boolean designerOnDemand() {
+        return qwenWanted() && qwenBaseModel() != null;
+    }
+
+    private static final long DESIGNER_IDLE_MS = 3 * 60_000;
+    private volatile long designerUsedAt;
+    private volatile long startGeneration;
+
+    /**
+     * Makes sure the VoiceDesign server runs, starting it when idle and waiting until it's ready (a second or two).
+     * Called off the server thread.
+     */
+    public boolean ensureDesigner() {
+        designerUsedAt = System.currentTimeMillis();
+        if (qwen.state() == ManagedProcess.State.READY) {
+            return true;
+        }
+        synchronized (this) {
+            if (!running || !qwenWanted()) {
+                return false;
+            }
+            if (qwen.state() != ManagedProcess.State.STARTING && qwen.state() != ManagedProcess.State.READY) {
+                TheyWillTalk.LOGGER.info("[qwen-tts] starting the voice designer");
+                startDesigner();
+            }
+        }
+        long deadline = System.currentTimeMillis() + 90_000;
+        while (System.currentTimeMillis() < deadline) {
+            ManagedProcess.State state = qwen.state();
+            if (state == ManagedProcess.State.READY) {
+                designerUsedAt = System.currentTimeMillis();
+                return true;
+            }
+            if (state == ManagedProcess.State.FAILED || state == ManagedProcess.State.STOPPED) {
+                return false;
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** Stops an idle on-demand voice designer. */
+    private void reapDesigner(long generation) {
+        while (running && generation == startGeneration) {
+            try {
+                Thread.sleep(30_000);
+            } catch (InterruptedException e) {
+                return;
+            }
+            synchronized (this) {
+                if (running && generation == startGeneration && designerOnDemand() && qwen.state() == ManagedProcess.State.READY
+                        && System.currentTimeMillis() - designerUsedAt > DESIGNER_IDLE_MS) {
+                    TheyWillTalk.LOGGER.info("[qwen-tts] voice designer idle, stopping it");
+                    qwen.stop();
+                }
+            }
         }
     }
 
@@ -216,7 +315,7 @@ public final class RuntimeManager {
         if (!running) {
             return;
         }
-        boolean brain = packages.stream().anyMatch(p -> p.group().equals("brain") || p.id().equals("llm-runtime"));
+        boolean brain = packages.stream().anyMatch(p -> p.group().equals("brain") || p.id().startsWith("llm-runtime"));
         boolean voices = packages.stream().anyMatch(p -> p.group().equals("voices") || p.id().equals("qwentts-server"));
         if (brain && !llmReady()) {
             restartLlm();
@@ -307,8 +406,27 @@ public final class RuntimeManager {
 
     // ---- processes ------------------------------------------------------------------------------------------
 
+    /** The CUDA build on NVIDIA GPUs, else the Vulkan build (AMD, Intel, or the CPU). */
     private Path llamaServer() {
-        return runtimeDir.resolve(platform.id).resolve("llama").resolve("llama-server" + platform.exe);
+        Path cuda = llamaServer("llama");
+        Path vulkan = llamaServer("llama-vulkan");
+        if (Files.isRegularFile(cuda) && (!Files.isRegularFile(vulkan) || nvidia())) {
+            return cuda;
+        }
+        return Files.isRegularFile(vulkan) ? vulkan : cuda;
+    }
+
+    /** Whether this llama.cpp package is the build the brain runs on. */
+    private boolean runsBrain(Package pkg) {
+        return pkg.id().startsWith("llm-runtime") && llamaServer().equals(runtimeDir.resolve(platform.expand(pkg.check().getFirst())));
+    }
+
+    private Path llamaServer(String folder) {
+        return runtimeDir.resolve(platform.id).resolve(folder).resolve("llama-server" + platform.exe);
+    }
+
+    private static boolean nvidia() {
+        return !GpuInfo.query().isEmpty();
     }
 
     private Path cudaDir() {
@@ -512,6 +630,7 @@ public final class RuntimeManager {
     public JsonObject modelsJson() {
         JsonObject o = new JsonObject();
         o.addProperty("platform", platform.id);
+        o.addProperty("nvidia", nvidia());
         o.addProperty("runtimeDir", runtimeDir.toString());
         try {
             Files.createDirectories(runtimeDir);
@@ -543,7 +662,12 @@ public final class RuntimeManager {
             p.add("tags", tags);
             boolean active = pkg.llmModel() != null ? pkg.llmModel().equals(llmFile)
                     : pkg.ttsEngine() != null && installed && engineInUse(pkg.ttsEngine(), engine);
+            if (pkg.id().startsWith("llm-runtime")) {
+                active = installed && llm.state() == ManagedProcess.State.READY && runsBrain(pkg);
+            }
             p.addProperty("active", active);
+            p.addProperty("recommended", recommended(pkg));
+            p.addProperty("wrongGpu", !suitsGpu(pkg));
             p.addProperty("selectable", pkg.llmModel() != null || pkg.ttsEngine() != null);
             JsonArray blockedBy = new JsonArray();
             blockers(pkg).forEach(b -> blockedBy.add(b.name()));
@@ -570,6 +694,7 @@ public final class RuntimeManager {
         JsonObject settings = new JsonObject();
         settings.addProperty("ttsEngine", engine);
         settings.addProperty("crudeLanguage", TwtConfig.CRUDE_LANGUAGE.get());
+        settings.addProperty("bleepSwearing", TwtConfig.BLEEP_SWEARING.get());
         settings.addProperty("externalLlmUrl", TwtConfig.EXTERNAL_LLM_URL.get());
         o.add("settings", settings);
         return o;
@@ -584,18 +709,28 @@ public final class RuntimeManager {
     }
 
     private boolean qwenRunning() {
-        return qwen.state() == ManagedProcess.State.READY || qwen.state() == ManagedProcess.State.STARTING;
+        for (ManagedProcess p : List.of(qwen, qwenClone)) {
+            if (p.state() == ManagedProcess.State.READY || p.state() == ManagedProcess.State.STARTING) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Packages this one needs that are neither installed nor downloadable here: installing it would be pointless. */
     private List<Package> blockers(Package pkg) {
-        return pkg.requires().stream().map(r -> catalog.get(r).orElseThrow())
+        return pkg.requires().stream().map(installer::dependency)
                 .filter(d -> !installer.installed(d) && !d.available(platform)).toList();
+    }
+
+    /** Whether a package and everything it needs suit this machine's GPU (Qwen3-TTS needs NVIDIA, for one). */
+    private boolean suitsGpu(Package pkg) {
+        return installer.suitsGpu(pkg) && pkg.requires().stream().allMatch(r -> suitsGpu(installer.dependency(r)));
     }
 
     /** What "Install recommended" installs on this platform. */
     public boolean recommended(Package pkg) {
-        if (!pkg.available(platform) || !blockers(pkg).isEmpty()) {
+        if (!pkg.available(platform) || !blockers(pkg).isEmpty() || !suitsGpu(pkg)) {
             return false;
         }
         // The expressive voices come along once their server can be downloaded.
@@ -633,7 +768,7 @@ public final class RuntimeManager {
     /** Deletes a package, stopping whatever uses its files first (Windows can't delete open files). */
     public synchronized void remove(String id) throws IOException {
         Package pkg = catalog.get(id).orElseThrow(() -> new IllegalArgumentException("unknown package " + id));
-        boolean brain = pkg.group().equals("brain") || pkg.id().equals("llm-runtime");
+        boolean brain = pkg.group().equals("brain") || runsBrain(pkg);
         boolean voices = pkg.group().equals("voices") || pkg.id().equals("qwentts-server") || pkg.id().equals("llm-runtime");
         if (brain) {
             llm.stop();

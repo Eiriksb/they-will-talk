@@ -47,6 +47,7 @@
     external: '<path d="M14 4h6v6M20 4l-9 9M18 14v6H4V6h6"/>',
     logout: '<path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/>',
     download: '<path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 19h16"/>',
+    sliders: '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
   };
   const icon = (name) => { const e = h('span', { style: { display: 'inline-flex' } }); e.innerHTML = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`; return e.firstChild; };
   const VILLAGER_SVG = '<svg viewBox="0 0 16 16" shape-rendering="crispEdges"><rect width="16" height="16" fill="#2a5d3f"/><rect x="3" y="2" width="10" height="3" fill="#4a2f1b"/><rect x="3" y="4" width="10" height="8" fill="#bd8b72"/><rect x="4" y="6" width="3" height="1" fill="#3b2414"/><rect x="9" y="6" width="3" height="1" fill="#3b2414"/><rect x="5" y="7" width="1" height="1" fill="#2f8a3b"/><rect x="10" y="7" width="1" height="1" fill="#2f8a3b"/><rect x="7" y="8" width="2" height="4" fill="#a86f58"/><rect x="3" y="12" width="10" height="3" fill="#6b4a2b"/></svg>';
@@ -148,6 +149,7 @@
     ['#/map', 'map', 'Map'],
     ['#/runtime', 'cpu', 'AI & voices'],
     ['#/models', 'download', 'Models'],
+    ['#/settings', 'sliders', 'Settings'],
   ];
   let main, titleEl, crumbsEl, statusEl, liveEl;
   let cleanup = [];
@@ -229,6 +231,7 @@
         case 'map': await viewMap(q); break;
         case 'runtime': await viewRuntime(); break;
         case 'models': await viewModels(); break;
+        case 'settings': await viewSettings(); break;
         default: main.replaceChildren(h('div', { class: 'empty' }, 'Not found'));
       }
     } catch (e) {
@@ -1057,7 +1060,9 @@
     const gpu = (r.gpus || [])[0];
     const procCard = (p) => h('section', { class: 'card' },
       h('header', null, h('h2', null, { llm: 'Villager brain (llama.cpp)', 'qwen-tts': 'Expressive voices (Qwen3-TTS)', 'qwen-clone': 'Voice cloning (Qwen3-TTS Base)' }[p.name] || 'CPU voices (Kokoro)'),
-        h('span', { class: 'pill ' + (p.state === 'READY' ? 'ok' : p.state === 'FAILED' ? 'bad' : 'warn') }, h('span', { class: 'dot' }), p.state.toLowerCase())),
+        p.onDemand && p.state === 'STOPPED'
+          ? h('span', { class: 'pill', title: 'Starts by itself while a new villager voice is designed, then stops to free GPU memory' }, h('span', { class: 'dot' }), 'idle · on demand')
+          : h('span', { class: 'pill ' + (p.state === 'READY' ? 'ok' : p.state === 'FAILED' ? 'bad' : 'warn') }, h('span', { class: 'dot' }), p.state.toLowerCase())),
       h('div', { class: 'body stack', style: { gap: '10px' } },
         h('dl', { class: 'kv' }, h('dt', null, 'PID'), h('dd', { class: 'num' }, p.pid > 0 ? p.pid : '–'),
           h('dt', null, 'Uptime'), h('dd', null, p.uptimeMs ? Math.round(p.uptimeMs / 60000) + ' min' : '–'),
@@ -1193,8 +1198,9 @@
           p.active ? h('span', { class: 'pill ok' }, h('span', { class: 'dot' }), 'In use')
             : p.installed ? h('span', { class: 'pill' }, h('span', { class: 'dot' }), 'Installed') : null),
         h('div', { class: 'body stack', style: { gap: '10px' } },
-          (p.tags.length ? h('div', { class: 'row' }, p.tags.includes('recommended') ? h('span', { class: 'tag' }, 'Recommended') : null,
-            uncensored ? h('span', { class: 'tag', style: { color: 'var(--critical)' } }, 'Uncensored') : null) : null),
+          (p.recommended || uncensored || p.wrongGpu ? h('div', { class: 'row' }, p.recommended ? h('span', { class: 'tag' }, 'Recommended') : null,
+            uncensored ? h('span', { class: 'tag', style: { color: 'var(--critical)' } }, 'Uncensored') : null,
+            p.wrongGpu ? h('span', { class: 'tag', style: { color: 'var(--warning)' } }, data.nvidia ? 'For AMD / Intel / CPU' : 'Needs an NVIDIA GPU') : null) : null),
           h('div', null, p.summary),
           h('div', { class: 'muted', style: { fontSize: '12.5px' } }, [p.size ? gb(p.size) : null, p.licence, p.source].filter(Boolean).join(' · ')),
           progress(p),
@@ -1211,8 +1217,10 @@
       const setup = data.setupNeeded ? h('section', { class: 'card' },
         h('header', null, h('h2', null, 'Set up the villagers\' AI')),
         h('div', { class: 'body stack', style: { gap: '12px' } },
-          h('div', null, 'Villagers need a brain (a language model, run on your NVIDIA GPU by llama.cpp) and voices. ',
-            'The recommended setup is Gemma 4 E2B with the Kokoro voices, plus the expressive Qwen3-TTS voices where they are available. Nothing is downloaded until you click; ',
+          h('div', null, 'Villagers need a brain (a language model, run by llama.cpp) and voices. ',
+            data.nvidia ? 'The recommended setup for your NVIDIA GPU is Gemma 4 E2B with the Kokoro voices, plus the expressive Qwen3-TTS voices. '
+              : 'No NVIDIA GPU was found, so the brain runs through Vulkan (AMD or Intel GPUs, or the CPU, which is slow) and villagers use the Kokoro voices; the expressive Qwen3-TTS voices need an NVIDIA GPU. ',
+            'Nothing is downloaded until you click; ',
             'every file comes from GitHub or Hugging Face and is checked against a pinned SHA-256 checksum.'),
           h('div', { class: 'row wrap' },
             h('button', { class: 'btn primary', disabled: data.busy || !data.recommendedBytes, onclick: () => act('install', { id: 'recommended' }) },
@@ -1220,6 +1228,7 @@
             h('span', { class: 'muted', style: { fontSize: '12.5px' } }, data.freeBytes >= 0 ? gb(data.freeBytes) + ' free on this disk' : '')))) : null;
 
       const crude = h('input', { type: 'checkbox', checked: s.crudeLanguage, onchange: (e) => act('settings', { crudeLanguage: e.target.checked }) });
+      const bleep = h('input', { type: 'checkbox', checked: s.bleepSwearing, onchange: (e) => act('settings', { bleepSwearing: e.target.checked }) });
       const engine = h('select', { class: 'input', onchange: (e) => act('settings', { ttsEngine: e.target.value }) },
         [['auto', 'Automatic (Qwen3-TTS when installed, else Kokoro)'], ['qwen3', 'Qwen3-TTS (GPU, expressive)'], ['kokoro', 'Kokoro (CPU)'], ['supertonic', 'Supertonic (CPU)']]
           .map(([v, label]) => h('option', { value: v, selected: v === s.ttsEngine }, label)));
@@ -1229,6 +1238,10 @@
             h('div', null, h('b', null, 'Crude language'),
               h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'Villagers may swear and be vulgar when it fits their mood and personality. Off keeps them clean. ',
                 'The standard Gemma models only swear mildly; pick an uncensored brain for strong language.'))),
+          h('label', { class: 'row', style: { alignItems: 'flex-start', cursor: 'pointer' } }, bleep,
+            h('div', null, h('b', null, 'Bleep swear words'),
+              h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'YouTube style: swear words show as f*** in subtitles and bubbles and are beeped in the voice. ',
+                'Turn off to let villagers swear uncensored. Slurs are always censored.'))),
           h('label', { class: 'field' }, 'Voice engine', engine)));
 
       root.replaceChildren(setup,
@@ -1242,6 +1255,94 @@
 
     render();
     poll();
+  }
+
+  // ------------------------------------------------------------------------------------------------------------
+  // settings
+  // ------------------------------------------------------------------------------------------------------------
+  const SECTION_TITLES = { runtime: 'AI programs', conversation: 'Conversations', villagers: 'Villagers', dashboard: 'Dashboard & map' };
+  const ENGINE_LABELS = { auto: 'Automatic', qwen3: 'Qwen3-TTS (GPU)', kokoro: 'Kokoro (CPU)', supertonic: 'Supertonic (CPU)' };
+
+  async function viewSettings() {
+    setTitle('Settings', ['They Will Talk']);
+    let data = await api('/settings');
+    let restartNeeded = false;
+    const root = h('div', { class: 'stack' });
+    main.replaceChildren(root);
+
+    const save = async (o, value, control) => {
+      try {
+        const res = await api('/settings', { key: o.key, value });
+        data = res;
+        if (res.restartAi) restartNeeded = true;
+        toast(o.label + ' saved');
+      } catch (e) {
+        if (e instanceof AuthError) return showLogin();
+        toast(e.message);
+      }
+      render();
+      if (control) control.focus();
+    };
+
+    const control = (o) => {
+      if (o.readOnly) return h('code', { class: 'setting-ro', title: 'Change it in config/theywilltalk-common.toml' }, String(o.value === '' ? '(empty)' : o.value));
+      if (o.type === 'boolean') {
+        const box = h('input', { type: 'checkbox', class: 'switch', checked: o.value ? '' : null, 'aria-label': o.label });
+        box.checked = o.value;
+        box.addEventListener('change', () => save(o, box.checked));
+        return box;
+      }
+      if (o.choices) {
+        const sel = h('select', { class: 'input', 'aria-label': o.label },
+          o.choices.map(c => h('option', { value: c, selected: c === o.value ? '' : null }, ENGINE_LABELS[c] || c)));
+        sel.addEventListener('change', () => save(o, sel.value));
+        return sel;
+      }
+      const number = o.type !== 'string';
+      const step = o.type === 'int' ? 1 : (o.max - o.min) <= 2 ? 0.05 : 0.5;
+      const input = h('input', { class: 'input', type: number ? 'number' : 'text', 'aria-label': o.label,
+        min: number ? o.min : null, max: number ? o.max : null, step: number ? step : null, value: o.value });
+      const commit = () => {
+        const v = number ? Number(input.value) : input.value.trim();
+        if (number && (input.value === '' || Number.isNaN(v))) { input.value = o.value; return; }
+        if (v !== o.value) save(o, v);
+      };
+      input.addEventListener('change', commit);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
+      return input;
+    };
+
+    const row = (o) => {
+      const changed = JSON.stringify(o.value) !== JSON.stringify(o.default);
+      const shown = (v) => o.type === 'boolean' ? (v ? 'on' : 'off') : o.choices ? (ENGINE_LABELS[v] || v) : v === '' ? '(empty)' : v;
+      const hint = [o.comment,
+        o.min != null && !o.readOnly ? `${o.min} to ${o.max}.` : null,
+        o.readOnly ? 'Only in the config file.' : null,
+        o.restartAi ? 'Takes effect when the AI restarts.' : null,
+        changed && !o.readOnly ? `Default: ${shown(o.default)}.` : null,
+      ].filter(Boolean).join(' ');
+      return h('div', { class: 'setting' },
+        h('div', null, h('div', { class: 'setting-label' }, o.label, changed ? h('span', { class: 'setting-changed', title: 'Changed from the default' }) : null),
+          hint ? h('div', { class: 'muted setting-hint' }, hint) : null),
+        h('div', { class: 'setting-control' }, control(o)));
+    };
+
+    function render() {
+      const banner = restartNeeded ? h('div', { class: 'banner', style: { margin: 0, display: 'flex', alignItems: 'center', gap: '12px' } },
+        h('span', { style: { flex: 1 } }, 'Some changes take effect when the AI programs restart. Villagers can\'t talk for a moment while they do.'),
+        h('button', { class: 'btn primary', onclick: async () => {
+          try { await api('/runtime/restart', {}); restartNeeded = false; toast('Restarting the AI...'); render(); refreshStatus(); }
+          catch (e) { if (e instanceof AuthError) return showLogin(); toast(e.message); }
+        } }, icon('refresh'), 'Restart the AI')) : null;
+      root.replaceChildren(...[banner].filter(Boolean),
+        h('div', { class: 'muted', style: { fontSize: '12.5px' } }, 'Changes are saved to config/theywilltalk-common.toml as you make them and take effect right away unless noted.'),
+        ...data.sections.map(sec => h('section', { class: 'card' },
+          h('header', null, h('h2', null, SECTION_TITLES[sec.id] || sec.id)),
+          h('div', { class: 'body' },
+            sec.comment ? h('div', { class: 'muted', style: { fontSize: '12.5px', marginBottom: '4px' } }, sec.comment) : null,
+            sec.options.map(row)))));
+    }
+    render();
   }
 
   // ------------------------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +72,12 @@ public record Catalog(List<Package> packages) {
 
     public Optional<Package> get(String id) {
         return packages.stream().filter(p -> p.id().equals(id)).findFirst();
+    }
+
+    /** A requirement is a package id, or alternatives like {@code a|b} of which any one will do. */
+    public List<Package> alternatives(String requirement) {
+        return Arrays.stream(requirement.split("\\|")).map(id -> get(id.trim()).orElseThrow(
+                () -> new IllegalStateException("unknown package " + id))).toList();
     }
 
     public static Catalog load() {

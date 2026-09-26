@@ -32,6 +32,9 @@ public final class TwtConfig {
     public static final ModConfigSpec.BooleanValue IGNORE_GROUP_SPEECH;
     public static final ModConfigSpec.IntValue MAX_REPLIES_PER_MINUTE;
     public static final ModConfigSpec.BooleanValue CRUDE_LANGUAGE;
+    public static final ModConfigSpec.BooleanValue BLEEP_SWEARING;
+    public static final ModConfigSpec.BooleanValue REPLY_IN_PLAYER_LANGUAGE;
+    public static final ModConfigSpec.BooleanValue SIPHER_BUBBLES;
 
     // villagers
     public static final ModConfigSpec.BooleanValue VANILLA_VILLAGERS;
@@ -114,6 +117,15 @@ public final class TwtConfig {
         CRUDE_LANGUAGE = b.comment("Villagers may swear and use crude language when it fits their mood and personality.",
                         "Off keeps them clean. For strong language, also pick an uncensored model on the Models page.")
                 .define("crudeLanguage", false);
+        BLEEP_SWEARING = b.comment("Bleep swear words, YouTube style: censored in subtitles and bubbles, replaced by a beep in the voice.",
+                        "Slurs are always censored.")
+                .define("bleepSwearing", true);
+        REPLY_IN_PLAYER_LANGUAGE = b.comment("Villagers answer in the language a player speaks (from Sipher), when the Qwen3-TTS voices can speak it",
+                        "(Chinese, English, French, German, Italian, Japanese, Korean, Portuguese, Russian, Spanish); otherwise in English.")
+                .define("replyInPlayerLanguage", true);
+        SIPHER_BUBBLES = b.comment("Show what villagers say as Sipher caption bubbles above them, translated into each player's reading language",
+                        "when they have the language pack (players need Sipher).")
+                .define("sipherBubbles", true);
         b.pop();
 
         b.comment("Which villagers can talk.").push("villagers");

@@ -1,7 +1,7 @@
 # They Will Talk
 
 A NeoForge 1.21.1 server mod: **villagers listen and answer out loud**, in character, with their own voice, mood and
-memories - powered by local AI running on the server's own NVIDIA GPU. Works with vanilla villagers, wandering
+memories - powered by local AI running on the server's own GPU (NVIDIA, or AMD/Intel through Vulkan). Works with vanilla villagers, wandering
 traders, **MCA Reborn** villagers and **MineColonies** citizens. Players talk with their voice through
 **Simple Voice Chat** + **[Sipher](https://github.com/Eiriksb/Sipher)**, or by typing. An admin **dashboard** shows
 every villager, their conversations, relationships, family trees and a map (with **BlueMap**).
@@ -32,7 +32,8 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
 
 * **Hearing.** Sipher transcribes each player's microphone on their own client, translates it to English and sends
   the caption to the server, which posts it as a `PlayerCaptionEvent`; finished lines go to the villagers. Typed
-  chat and `/twt talk` work too.
+  chat and `/twt talk` work too. Villagers answer in the language the player speaks when the Qwen3-TTS voices can
+  speak it (English, German, French, Spanish, Italian, Portuguese, Russian, Japanese, Korean, Chinese), else in English.
 * **Who is being talked to.** The villager you look at, the one whose name you say, or the one you're already
   talking to (while you still roughly face it). Players chatting with each other near villagers are left alone.
   Villager voices picked up by open microphones are recognised and ignored (echo filter).
@@ -46,8 +47,14 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
   grumpy"). VoiceDesign imagines the voice anew for every request, so it's designed once per villager (a reference
   clip, saved with the world) and the Qwen3-TTS Base model speaks every line cloning it; each mood (happy, angry,
   sad, scared) gets its own clip read in that same voice (`VoiceBank`). Admins can give a villager a real voice
-  instead: a clip uploaded or recorded on the dashboard replaces the designed one. Audio streams into a Simple Voice
-  Chat entity channel (Opus in AUDIO mode), so it comes from the villager and fades with distance.
+  instead: a clip uploaded or recorded on the dashboard replaces the designed one. The VoiceDesign server only runs
+  while new voices are being designed and stops after a few idle minutes, leaving the GPU memory to the brain.
+  Audio streams into a Simple Voice Chat entity channel (Opus in AUDIO mode), so it comes from the villager and fades
+  with distance. What villagers say also shows as a Sipher caption bubble above them (Sipher 0.2.0+), translated
+  into each player's reading language, and as a subtitle.
+* **Swearing.** With *crude language* on, villagers may swear. By default it's bleeped YouTube style: `f***` in
+  subtitles, bubbles and the map, and a beep in the voice (`Profanity`). Turning *bleep swear words* off lets them
+  swear uncensored. Slurs are always censored.
 * **Remembering.** After each exchange a structured LLM call rates how the villager's opinion changed and what to
   remember; hitting, trading, killing villagers in front of others all become memories. MCA hearts and moods are
   updated through MCA's own API.
@@ -56,13 +63,17 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
 * **The map.** The dashboard's map is BlueMap, proxied at `/bluemap/` behind the dashboard login, with every talking
   villager and village as a marker. Villagers appear on BlueMap and in the dashboard with their real faces, drawn on the server from their skins the
   way the game's models draw them (`faces/`: the vanilla villager head with biome and profession layers; MCA's
-  layered skin, eyes, clothing and hair with MCA's gene-based tints).
-* **Installing the AI.** The mod jar holds no models. The dashboard's **Models** page downloads llama.cpp (+ CUDA
-  runtime), the language model and the voices on one click, from a catalogue compiled into the jar
+  layered skin, eyes, clothing and hair with MCA's gene-based tints; MineColonies' own face icon for each citizen's
+  job, skin tone and the colony's style pack).
+* **Installing the AI.** The mod jar holds no models. The dashboard's **Models** page downloads llama.cpp, the
+  language model and the voices on one click, from a catalogue compiled into the jar
   (`assets/theywilltalk/runtime/catalog.json`): every file is pinned to a GitHub or Hugging Face URL and a SHA-256.
-  Admins pick the brain (Gemma 4 E2B/E4B, or their uncensored variants) and voice engine there, and can let
-  villagers swear (*crude language*, off by default). Archives are unpacked by the voice server jar (`Unpack`), which
-  ships inside the mod.
+  With an NVIDIA GPU that's the CUDA build of llama.cpp plus the Qwen3-TTS voices; otherwise the Vulkan build (AMD and
+  Intel GPUs, or the CPU) with the Kokoro voices. Admins pick the brain (Gemma 4 E2B/E4B, or their uncensored
+  variants) and voice engine there, and can let villagers swear (*crude language*, off by default). Archives are
+  unpacked by the voice server jar (`Unpack`), which ships inside the mod.
+* **Settings.** The dashboard's **Settings** page edits every option in `config/theywilltalk-common.toml` (except
+  the ones that could lock the admin out, like the dashboard's address), saved as you change them.
 
 ## Layout
 
@@ -81,7 +92,7 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
 
 ## Development
 
-Requirements: JDK 21 (`~/.local/opt/jdk-21` is used by the scripts), an NVIDIA GPU, Linux x64, and
+Requirements: JDK 21 (`~/.local/opt/jdk-21` is used by the scripts), a GPU (NVIDIA for the Qwen3-TTS voices), Linux x64, and
 [Sipher](https://github.com/Eiriksb/Sipher) built next to this repository (`../Sipher`, `./gradlew assemble`), since
 it isn't published yet (or point `-PsipherJar=<path>` at its jar).
 

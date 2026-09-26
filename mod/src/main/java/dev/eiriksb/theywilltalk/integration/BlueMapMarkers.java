@@ -1,5 +1,9 @@
 package dev.eiriksb.theywilltalk.integration;
 
+import dev.eiriksb.theywilltalk.TwtConfig;
+
+import dev.eiriksb.theywilltalk.conversation.Profanity;
+
 import java.util.ArrayList;
 
 import dev.eiriksb.theywilltalk.faces.VillagerFaces;
@@ -252,7 +256,7 @@ final class BlueMapMarkers {
         if (r.lastLine != null && !r.lastLine.isBlank()) {
             sb.append("<div style='margin-top:8px;padding-left:8px;border-left:2px solid rgba(255,255,255,.35);font-style:italic;")
                     .append("display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden'>&ldquo;")
-                    .append(esc(r.lastLine)).append("&rdquo;</div>");
+                    .append(esc(Profanity.censor(r.lastLine, TwtConfig.BLEEP_SWEARING.get()))).append("&rdquo;</div>");
         }
         return sb.append("</div>").toString();
     }

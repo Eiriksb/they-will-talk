@@ -96,6 +96,7 @@ final class Api {
                 }
             }
             case "models" -> models(ex, method, parts);
+            case "settings" -> settings(ex, method);
             case "personas" -> DashboardServer.sendJson(ex, 200, personas());
             case "stream" -> stream(ex);
             default -> DashboardServer.sendJson(ex, 404, DashboardServer.error("unknown endpoint " + path));
@@ -699,6 +700,7 @@ final class Api {
             JsonObject j = new JsonObject();
             j.addProperty("name", p.name());
             j.addProperty("state", p.state().name());
+            j.addProperty("onDemand", p == rt.qwenTtsProcess() && rt.designerOnDemand());
             j.addProperty("pid", p.pid());
             j.addProperty("uptimeMs", p.uptimeMs());
             j.addProperty("lastError", p.lastError());
@@ -751,6 +753,10 @@ final class Api {
                             TwtConfig.CRUDE_LANGUAGE.set(body.get("crudeLanguage").getAsBoolean());
                             TwtConfig.CRUDE_LANGUAGE.save();
                         }
+                        if (body.has("bleepSwearing")) {
+                            TwtConfig.BLEEP_SWEARING.set(body.get("bleepSwearing").getAsBoolean());
+                            TwtConfig.BLEEP_SWEARING.save();
+                        }
                         if (body.has("ttsEngine")) {
                             rt.setTtsEngine(body.get("ttsEngine").getAsString());
                         }
@@ -766,6 +772,24 @@ final class Api {
             }
         }
         DashboardServer.sendJson(ex, 200, rt.modelsJson());
+    }
+
+    private void settings(HttpExchange ex, String method) throws Exception {
+        JsonObject o;
+        if (method.equals("POST")) {
+            boolean restartAi;
+            try {
+                restartAi = Settings.update(DashboardServer.readJson(ex), mod().runtime());
+            } catch (IllegalArgumentException | IllegalStateException e) {
+                DashboardServer.sendJson(ex, 400, DashboardServer.error(e.getMessage()));
+                return;
+            }
+            o = Settings.json();
+            o.addProperty("restartAi", restartAi);
+        } else {
+            o = Settings.json();
+        }
+        DashboardServer.sendJson(ex, 200, o);
     }
 
     private JsonArray personas() {

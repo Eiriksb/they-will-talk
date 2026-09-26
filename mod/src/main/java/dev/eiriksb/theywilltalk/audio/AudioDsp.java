@@ -44,6 +44,17 @@ public final class AudioDsp {
         }
     }
 
+    /** A censor beep: a 1 kHz tone with soft edges, like a TV bleep. */
+    public static short[] beep(int ms) {
+        short[] pcm = new short[SVC_RATE * ms / 1000];
+        int fade = SVC_RATE * 6 / 1000;
+        for (int i = 0; i < pcm.length; i++) {
+            double env = Math.min(1.0, Math.min(i, pcm.length - 1 - i) / (double) fade);
+            pcm[i] = (short) (Math.sin(2 * Math.PI * 1000 * i / SVC_RATE) * 0.28 * 32767 * env);
+        }
+        return pcm;
+    }
+
     public static short[] silence(int ms) {
         return new short[SVC_RATE * ms / 1000];
     }

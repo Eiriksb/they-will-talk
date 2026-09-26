@@ -10,8 +10,8 @@ the internet. The AI programs and models are downloaded once, when you click *In
 | | |
 |---|---|
 | Minecraft / loader | 1.21.1, NeoForge 21.1.227 or newer |
-| GPU | NVIDIA, 8 GB VRAM or more (RTX 3060 / 4060 Ti or better). The AI uses about 4.5 GB. |
-| NVIDIA driver | 570 or newer on Linux (any recent driver on Windows) |
+| GPU | NVIDIA, 8 GB VRAM or more (RTX 3060 / 4060 Ti or better): the AI uses about 4.5 GB, and 7 GB for a minute while it designs a new villager's voice. AMD and Intel GPUs work too (through Vulkan), with the Kokoro voices instead of the expressive Qwen3-TTS ones. Without a GPU the brain runs on the CPU: it works, but villagers take several seconds to answer. |
+| GPU driver | NVIDIA: 570 or newer on Linux (any recent driver on Windows). AMD/Intel: a Vulkan driver (Mesa on Linux, the normal driver on Windows) |
 | RAM / disk | about 2 GB extra RAM, 4-10 GB disk depending on the models you pick |
 | CPU | the fallback voice engine and the helper processes run at lower priority than the Minecraft server |
 
@@ -24,10 +24,12 @@ the internet. The AI programs and models are downloaded once, when you click *In
      on the server as well as on the players' clients: players' captions only reach servers that have it.
    * optional: **MCA Reborn**, **MineColonies**, **BlueMap**.
 3. Start the server, then open the admin dashboard (in game as an operator: `/twt dashboard`) and go to **Models**.
-4. Click **Install recommended**: llama.cpp with the NVIDIA CUDA runtime, the Gemma 4 E2B villager brain, the
-   Kokoro voices and, on Linux, the expressive Qwen3-TTS voices with voice cloning (about 6.5 GB on Linux, 3.7 GB on
-   Windows). When it's done the AI starts by itself; the log says `[llm] ready`, `[qwen-tts] ready`,
-   `[qwen-clone] ready` and `[voice] ready`.
+4. Click **Install recommended**. With an NVIDIA GPU that's llama.cpp with the CUDA runtime, the Gemma 4 E2B villager
+   brain, the Kokoro voices and, on Linux, the expressive Qwen3-TTS voices with voice cloning (about 6.5 GB on Linux,
+   3.7 GB on Windows). Without one it's llama.cpp for Vulkan (AMD, Intel, or the CPU), the brain and the Kokoro voices
+   (about 3 GB). When it's done the AI starts by itself; the log says `[llm] ready`, `[qwen-clone] ready` and
+   `[voice] ready`. (The Qwen3-TTS VoiceDesign server, `[qwen-tts]`, only starts when a new villager voice has to be
+   designed, and stops again after a few idle minutes.)
 5. `/twt status` (or the dashboard) shows whether everything is running.
 
 Everything on the Models page comes from GitHub or Hugging Face and is checked against a SHA-256 checksum built into
@@ -41,10 +43,13 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
 * **Uncensored brains:** Gemma 4 E2B/E4B with their refusals removed (by huihui-ai). Together with **Crude language**
   (under *Behaviour*) villagers swear like sailors. They can say offensive things: only use them where every player
   is fine with that. With crude language off, villagers are told to keep it clean, whichever brain you use.
+* **Bleep swear words** (on by default): swearing is bleeped YouTube style, `f***` in subtitles, caption bubbles and
+  the map, and a beep in the voice. Turn it off to let villagers swear uncensored. Slurs are always censored.
 * **Voices:** Kokoro (54 voices on the CPU, the default), Supertonic (lighter), or Qwen3-TTS (expressive voices on
-  the GPU, about 2.5 GB of GPU memory; Linux only for now). Add **Qwen3-TTS voice cloning** (about 1.5 GB more) to
-  keep each villager's voice exactly the same in every line: their voice is designed once and saved with the world
-  (`world/theywilltalk/voices/`), then every line and mood is spoken in it.
+  the GPU, about 2.5 GB of GPU memory; NVIDIA on Linux only for now). Add **Qwen3-TTS voice cloning** to keep each
+  villager's voice exactly the same in every line: their voice is designed once and saved with the world
+  (`world/theywilltalk/voices/`), then every line and mood is spoken in it. With cloning, the VoiceDesign model only
+  runs while it designs new voices, so day to day the voices still need only about 2.5 GB of GPU memory.
 * **Your own voices:** with voice cloning installed, open a villager in the dashboard and use **Their voice**: upload a
   clip (5-20 seconds of one person speaking clearly, any audio format your browser plays) or record one with your
   microphone, add what is said in it for the closest match, and the villager speaks every line and mood in that voice.
@@ -54,7 +59,11 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
 
 * Install **Simple Voice Chat** and **Sipher** on the client, and keep Sipher's *Share my captions* on (the default).
   Speaking another language than English? Press **O**, open *Languages*, pick it under *I speak* and download its
-  pack; Sipher translates what you say to English for the villagers.
+  pack; Sipher translates what you say to English for the villagers. With the Qwen3-TTS voices, villagers answer in
+  German, French, Spanish, Italian, Portuguese, Russian, Japanese, Korean or Chinese when you speak it; other
+  languages get English answers.
+* What villagers say shows as a caption bubble above them (and in Sipher's transcript), translated into the language
+  you read if you have its pack. The bubbles need Sipher 0.2.0 or newer on the server and the client.
 * Walk up to a villager, **look at it** (or say its name) and talk. Keep talking for a while without looking,
   as long as you're still roughly facing it.
 * Use **push-to-talk** or headphones: with open speakers and voice activation, the microphone can pick up villager
@@ -74,7 +83,7 @@ It shows all villagers (search by name, job, village), each villager's conversat
 with players (affinity, MCA hearts, marriages), family trees (MCA / MineColonies), villages and colonies, a live
 activity feed, the BlueMap 3D map with every villager on it (if you run BlueMap), GPU stats, and a voice lab where you can
 design and audition voices. You can edit any villager's personality, backstory, voice description and extra
-instructions.
+instructions. The **Settings** page changes the mod's settings (below) without editing files.
 
 ## Commands
 
@@ -91,10 +100,12 @@ instructions.
 
 ## Configuration (`config/theywilltalk-common.toml`)
 
-The most useful settings:
+Every setting can be changed on the dashboard's **Settings** page, except `runtimeDir`, `externalLlmUrl` and the
+dashboard's own address, port and BlueMap URL, which are only in the file. The most useful settings:
 
-* `llmModel`, `ttsEngine`, `crudeLanguage` - easiest to set on the dashboard's Models page. `llmModel` can also name
-  any GGUF you drop into `theywilltalk/runtime/models/llm/` yourself.
+* `llmModel`, `ttsEngine`, `crudeLanguage`, `bleepSwearing` - easiest to set on the dashboard's Models page.
+  `llmModel` can also name any GGUF you drop into `theywilltalk/runtime/models/llm/` yourself.
+* `replyInPlayerLanguage`, `sipherBubbles` - villagers answering in the player's language, and their caption bubbles.
 * `externalLlmUrl` - use your own OpenAI-compatible server (llama.cpp, Ollama, LM Studio...) instead of the built-in
   one.
 * `listenRadius`, `voiceDistance`, `requireLookOrName`, `activeConversationSeconds` - who hears what.
@@ -110,7 +121,8 @@ The most useful settings:
 * "AI not installed": open the dashboard's **Models** page and click **Install recommended**.
 * A download failed: click **Download** again; it resumes where it stopped. "Checksum mismatch" means the file
   arrived corrupted (or changed upstream) and was thrown away.
-* "AI starting" forever: check the NVIDIA driver (`nvidia-smi`) and `logs/theywilltalk/llm.log`.
+* "AI starting" forever: check the GPU driver (`nvidia-smi` for NVIDIA, `vulkaninfo --summary` for AMD/Intel) and
+  `logs/theywilltalk/llm.log`. On Linux the Vulkan build needs the Vulkan loader (`libvulkan1` / `vulkan-loader`).
 * Villagers answer in chat but you hear nothing: the player needs Simple Voice Chat installed and connected.
 * Villagers don't react to voice: the server and the player both need Sipher (with *Share my captions* on), and the
   player has to look at the villager or say its name.
@@ -118,5 +130,6 @@ The most useful settings:
 * The map is BlueMap (install it on the server). It only starts once its resource download is accepted: `accept-download: true` in `config/bluemap/core.conf`, then `/bluemap reload`. The dashboard serves
   BlueMap at `/bluemap/`, so its own port doesn't need to be reachable.
 * Villager faces (on BlueMap and in the dashboard) are drawn from each villager's skin when they're loaded. MCA
-  villagers always get theirs; vanilla villagers need Minecraft's own textures, which a dedicated server only has once
-  BlueMap has downloaded them. Villagers without a face show a generic icon or their initials.
+  villagers and MineColonies citizens always get theirs; vanilla villagers need Minecraft's own textures, which a
+  dedicated server only has once BlueMap has downloaded them. Villagers without a face show a generic icon or their
+  initials.

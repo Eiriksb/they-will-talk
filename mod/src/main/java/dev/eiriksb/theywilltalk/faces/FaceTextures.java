@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -25,6 +26,8 @@ import java.util.stream.Stream;
  */
 final class FaceTextures {
     private final Path gameDir;
+    /** Where texture files come from: the mods and the client jar, or a test's files. */
+    private final Function<String, Optional<byte[]>> source;
     private final Map<String, Optional<byte[]>> files = new ConcurrentHashMap<>();
     private final Map<String, Optional<BufferedImage>> images = new ConcurrentHashMap<>();
     private volatile FileSystem clientJar;
@@ -32,6 +35,13 @@ final class FaceTextures {
 
     FaceTextures(Path gameDir) {
         this.gameDir = gameDir;
+        this.source = this::load;
+    }
+
+    /** Textures from {@code source} (resource id to file), for tests. */
+    FaceTextures(Function<String, Optional<byte[]>> source) {
+        this.gameDir = null;
+        this.source = source;
     }
 
     /** A texture by resource id ({@code namespace:path}). */
@@ -54,7 +64,7 @@ final class FaceTextures {
     }
 
     private Optional<byte[]> bytes(String id) {
-        return files.computeIfAbsent(id, this::load);
+        return files.computeIfAbsent(id, source);
     }
 
     private Optional<byte[]> load(String id) {

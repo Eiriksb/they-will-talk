@@ -150,7 +150,7 @@ public final class TheyWillTalk {
         tts = new TtsClient(() -> runtime.voiceReady() ? runtime.voiceBaseUrl() : null);
         qwenTts = new QwenTtsClient(() -> runtime.qwenTtsBaseUrl());
         QwenTtsClient qwenClone = new QwenTtsClient(() -> runtime.qwenCloneBaseUrl());
-        speech = new SpeechRenderer(tts, qwenTts, new VoiceBank(worldData.resolve("voices"), qwenTts, qwenClone));
+        speech = new SpeechRenderer(tts, qwenTts, new VoiceBank(worldData.resolve("voices"), qwenTts, qwenClone, runtime::ensureDesigner));
         villagers = new VillagerRegistry(store, tts);
         faces = new VillagerFaces(gameDir, worldData.resolve("faces"));
         integrations = new Integrations();

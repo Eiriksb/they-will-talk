@@ -16,6 +16,17 @@ public sealed interface FaceSpec {
     record Villager(List<String> layers) implements FaceSpec {}
 
     /**
+     * A MineColonies citizen, whose skin MineColonies picks by model (job), gender, texture variant, skin tone suffix
+     * and the colony's style pack.
+     *
+     * @param model     the model's texture base, like {@code baker} or {@code citizen}
+     * @param textureId picks one of the model's variants
+     * @param suffix    skin tone, like {@code _a}
+     * @param style     the colony's style pack folder, like {@code medieval}
+     */
+    record Citizen(String model, boolean female, int textureId, String suffix, String style) implements FaceSpec {}
+
+    /**
      * An MCA villager as MCA draws them: skin tinted by melanin/hemoglobin (or a dye), a face chosen by the face gene
      * with eyes in their genetic or dyed colour, clothing, and hair tinted by eumelanin/pheomelanin (or a dye).
      *

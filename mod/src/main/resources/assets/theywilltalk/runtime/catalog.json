@@ -4,11 +4,11 @@
     {
       "id": "llm-runtime",
       "group": "programs",
-      "name": "llama.cpp server + NVIDIA CUDA runtime",
-      "summary": "Runs the villager brain on the GPU (llama.cpp build b11160, CUDA 12).",
+      "name": "llama.cpp server (NVIDIA CUDA)",
+      "summary": "Runs the villager brain on NVIDIA GPUs (llama.cpp build b11160, CUDA 12). Also needed for the Qwen3-TTS voices.",
       "licence": "MIT (llama.cpp), NVIDIA CUDA EULA (redistributable runtime)",
       "source": "github.com/ggml-org/llama.cpp",
-      "tags": ["recommended"],
+      "tags": ["recommended", "nvidia"],
       "check": ["{platform}/llama/llama-server{exe}"],
       "platforms": {
         "linux-x64": [
@@ -54,13 +54,48 @@
       }
     },
     {
+      "id": "llm-runtime-vulkan",
+      "group": "programs",
+      "name": "llama.cpp server (Vulkan)",
+      "summary": "Runs the villager brain on AMD and Intel GPUs through Vulkan (llama.cpp build b11160), or on the CPU when there's no usable GPU (slow). NVIDIA GPUs are faster with the CUDA package.",
+      "licence": "MIT",
+      "source": "github.com/ggml-org/llama.cpp",
+      "tags": ["recommended", "vulkan"],
+      "check": ["{platform}/llama-vulkan/llama-server{exe}"],
+      "platforms": {
+        "linux-x64": [
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11160/llama-b11160-bin-ubuntu-vulkan-x64.tar.gz",
+            "sha256": "4dd1285b8b1554ce4c87904daaf0c9c0c38a5004187604ae2c6e3c5c212cb6f8",
+            "size": 30943538,
+            "archive": "tar.gz",
+            "into": "linux-x64/llama-vulkan",
+            "flatten": true,
+            "include": ["llama-server", "libllama*.so*", "libggml*.so*", "libmtmd.so*", "LICENSE*"]
+          }
+        ],
+        "windows-x64": [
+          {
+            "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11160/llama-b11160-bin-win-vulkan-x64.zip",
+            "sha256": "55d67f0596a268f8fa710a1762c0cbde3c4c96c716512c80a57cb4d867c036d0",
+            "size": 32450504,
+            "archive": "zip",
+            "into": "windows-x64/llama-vulkan",
+            "flatten": true,
+            "include": ["llama-server.exe", "*.dll", "LICENSE*"]
+          }
+        ]
+      }
+    },
+    {
       "id": "qwentts-server",
       "group": "programs",
       "name": "Qwen3-TTS server",
-      "summary": "Runs the expressive Qwen3-TTS voices on the GPU (qwentts.cpp 6a3e912, CUDA), built by They Will Talk. Uses the CUDA runtime from the llama.cpp package.",
+      "summary": "Runs the expressive Qwen3-TTS voices on NVIDIA GPUs (qwentts.cpp 6a3e912, CUDA), built by They Will Talk. Uses the CUDA runtime from the llama.cpp CUDA package.",
       "licence": "MIT (qwentts.cpp)",
       "source": "github.com/Eiriksb/they-will-talk (built from ServeurpersoCom/qwentts.cpp)",
       "unavailable": "No prebuilt download for this platform yet: villagers use the CPU voices. Advanced: build qwentts.cpp yourself and put tts-server in {platform}/qwentts/ inside the runtime folder.",
+      "tags": ["nvidia"],
       "requires": ["llm-runtime"],
       "check": ["{platform}/qwentts/tts-server{exe}"],
       "platforms": {
@@ -85,7 +120,7 @@
       "licence": "Apache-2.0",
       "source": "huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF",
       "tags": ["recommended"],
-      "requires": ["llm-runtime"],
+      "requires": ["llm-runtime|llm-runtime-vulkan"],
       "llmModel": "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf",
       "check": ["models/llm/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf"],
       "platforms": {
@@ -106,7 +141,7 @@
       "summary": "Richer, smarter replies. About 3 GB of GPU memory and a bit slower.",
       "licence": "Apache-2.0",
       "source": "huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF",
-      "requires": ["llm-runtime"],
+      "requires": ["llm-runtime|llm-runtime-vulkan"],
       "llmModel": "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
       "check": ["models/llm/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"],
       "platforms": {
@@ -128,7 +163,7 @@
       "licence": "Apache-2.0",
       "source": "huggingface.co/huihui-ai/Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-GGUF",
       "tags": ["uncensored"],
-      "requires": ["llm-runtime"],
+      "requires": ["llm-runtime|llm-runtime-vulkan"],
       "llmModel": "Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf",
       "check": ["models/llm/Huihui-gemma-4-E2B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf"],
       "platforms": {
@@ -150,7 +185,7 @@
       "licence": "Apache-2.0",
       "source": "huggingface.co/huihui-ai/Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-GGUF",
       "tags": ["uncensored"],
-      "requires": ["llm-runtime"],
+      "requires": ["llm-runtime|llm-runtime-vulkan"],
       "llmModel": "Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf",
       "check": ["models/llm/Huihui-gemma-4-E4B-it-qat-q4_0-unquantized-abliterated-Q4_K.gguf"],
       "platforms": {

@@ -11,9 +11,9 @@ permissions:
   contents: read
 
 env:
-  # They Will Talk compiles against Sipher's PlayerCaptionEvent, and Sipher isn't published yet: build it from this
-  # commit. Bump it when They Will Talk needs something newer from Sipher.
-  SIPHER_REF: 87c3bea6e5573ca5c41ee4cc59c3696b2c5b9b3e
+  # They Will Talk compiles against Sipher's PlayerCaptionEvent and SipherCaptions, and Sipher isn't on Maven: build it
+  # from this commit. Bump it when They Will Talk needs something newer from Sipher.
+  SIPHER_REF: 98b7b614388002338c2c85a485ce5ed9467c6e17
 
 jobs:
   build:

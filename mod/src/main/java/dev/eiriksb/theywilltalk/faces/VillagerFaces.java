@@ -30,7 +30,7 @@ import java.util.function.Function;
 
 /**
  * Every talking villager's real face, drawn from their skin: the vanilla villager head for vanilla villagers and
- * wandering traders, MCA's layered skin for MCA villagers. Faces are drawn in the background when a villager's looks
+ * wandering traders, MCA's layered skin for MCA villagers, MineColonies' own face icons for citizens. Faces are drawn in the background when a villager's looks
  * change (new job, haircut, dye...) and kept in the world folder ({@code faces/<uuid>.png}), so unloaded villagers keep
  * theirs. Used for BlueMap markers and the dashboard.
  */
@@ -49,12 +49,14 @@ public final class VillagerFaces {
     /** Versions being drawn. */
     private final Map<UUID, String> drawing = new ConcurrentHashMap<>();
     private final Function<Entity, FaceSpec> mcaSpecs;
+    private final Function<Entity, FaceSpec> colonySpecs;
 
     public VillagerFaces(Path gameDir, Path dir) {
         this.dir = dir;
         this.textures = new FaceTextures(gameDir);
         this.renderer = new FaceRenderer(textures);
         this.mcaSpecs = ModList.get().isLoaded("mca") ? mcaSpecs() : e -> null;
+        this.colonySpecs = ModList.get().isLoaded("minecolonies") ? colonySpecs() : e -> null;
     }
 
     private static Function<Entity, FaceSpec> mcaSpecs() {
@@ -62,6 +64,15 @@ public final class VillagerFaces {
             return dev.eiriksb.theywilltalk.integration.McaFaces::spec;
         } catch (Throwable t) {
             TheyWillTalk.LOGGER.warn("MCA faces unavailable (version mismatch?): {}", t.toString());
+            return e -> null;
+        }
+    }
+
+    private static Function<Entity, FaceSpec> colonySpecs() {
+        try {
+            return dev.eiriksb.theywilltalk.integration.MineColoniesFaces::spec;
+        } catch (Throwable t) {
+            TheyWillTalk.LOGGER.warn("MineColonies faces unavailable (version mismatch?): {}", t.toString());
             return e -> null;
         }
     }
@@ -140,6 +151,10 @@ public final class VillagerFaces {
         FaceSpec mca = mcaSpecs.apply(entity);
         if (mca != null) {
             return mca;
+        }
+        FaceSpec citizen = colonySpecs.apply(entity);
+        if (citizen != null) {
+            return citizen;
         }
         if (entity instanceof WanderingTrader) {
             return new FaceSpec.Villager(List.of("minecraft:textures/entity/wandering_trader.png"));

@@ -4,11 +4,14 @@ import dev.eiriksb.theywilltalk.TheyWillTalk;
 import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.ai.QwenTtsClient;
 import dev.eiriksb.theywilltalk.ai.TtsClient;
+import dev.eiriksb.theywilltalk.conversation.Languages;
+import dev.eiriksb.theywilltalk.conversation.Profanity;
 import dev.eiriksb.theywilltalk.villager.VillagerFacts;
 import dev.eiriksb.theywilltalk.villager.VillagerProfile;
 import dev.eiriksb.theywilltalk.villager.VoiceDesign;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -19,6 +22,7 @@ import java.util.function.BooleanSupplier;
  *   once-designed voice ({@link VoiceBank}), otherwise VoiceDesign imagines it from the description each time.</li>
  *   <li><b>Kokoro / Supertonic</b> (CPU voice server): a cast voice with pitch/speed/volume mood shaping.</li>
  * </ul>
+ * Swear words are beeped out (and slurs always): the line is spoken in pieces around them.
  */
 public final class SpeechRenderer {
     private final TtsClient voiceServer;
@@ -40,10 +44,10 @@ public final class SpeechRenderer {
         return expressive() && voices.available();
     }
 
-    /** Qwen3-TTS is running and not switched off in the config. */
+    /** Qwen3-TTS is running (as the voice designer or the voice cloner) and not switched off in the config. */
     public boolean expressive() {
         String engine = TwtConfig.TTS_ENGINE.get();
-        return qwen.available() && !engine.equalsIgnoreCase("kokoro") && !engine.equalsIgnoreCase("supertonic");
+        return (qwen.available() || voices.available()) && !engine.equalsIgnoreCase("kokoro") && !engine.equalsIgnoreCase("supertonic");
     }
 
     public static String designOf(VillagerProfile p, VillagerFacts f) {
@@ -55,26 +59,55 @@ public final class SpeechRenderer {
     }
 
     /**
-     * Speaks {@code text} into {@code stream} (streaming when the engine allows it).
+     * Speaks {@code text} into {@code stream} (streaming when the engine allows it), beeping out swear words.
      *
+     * @param language the language code the line is in ("en", "de"...); only Qwen3-TTS speaks other languages than English
      * @return milliseconds of audio pushed
      */
-    public long speak(VillagerProfile p, VillagerFacts f, String text, String emotion, boolean firstLine,
+    public long speak(VillagerProfile p, VillagerFacts f, String text, String emotion, String language, boolean firstLine,
                       VoiceOutput.SpeechStream stream, BooleanSupplier cancelled) throws IOException, InterruptedException {
+        List<Profanity.Part> parts = Profanity.split(text, TwtConfig.BLEEP_SWEARING.get());
+        if (parts.size() == 1 && !parts.getFirst().bleep()) {
+            return speakPlain(p, f, text, emotion, language, firstLine, stream, cancelled);
+        }
+        long ms = 0;
+        boolean first = firstLine;
+        for (Profanity.Part part : parts) {
+            if (cancelled.getAsBoolean()) {
+                break;
+            }
+            if (part.bleep()) {
+                short[] beep = AudioDsp.beep(Profanity.beepMs(part.text()));
+                stream.push(beep);
+                ms += beep.length * 1000L / AudioDsp.SVC_RATE;
+            } else if (part.text().chars().anyMatch(Character::isLetterOrDigit)) {
+                ms += speakPlain(p, f, part.text().trim(), emotion, language, first, stream, cancelled);
+                first = false;
+            }
+        }
+        return ms;
+    }
+
+    private long speakPlain(VillagerProfile p, VillagerFacts f, String text, String emotion, String language, boolean firstLine,
+                            VoiceOutput.SpeechStream stream, BooleanSupplier cancelled) throws IOException, InterruptedException {
         if (expressive()) {
             long[] pushed = {0};
+            String qwenLanguage = Languages.qwenLabel(language);
             try {
                 if (voices.available()) {
                     try {
-                        return streamCloned(p, f, text, emotion, stream, cancelled, pushed);
+                        return streamCloned(p, f, text, emotion, qwenLanguage, stream, cancelled, pushed);
                     } catch (IOException e) {
                         if (pushed[0] > 0) {
                             return pushed[0] * 1000L / AudioDsp.SVC_RATE; // broke off mid-sentence: don't start it over
                         }
-                        TheyWillTalk.LOGGER.debug("Qwen3-TTS voice cloning failed, designing the voice for this line: {}", e.toString());
+                        TheyWillTalk.LOGGER.debug("Qwen3-TTS voice cloning failed: {}", e.toString());
                     }
                 }
-                return streamQwen(qwen, text, VoiceDesign.forLine(designOf(p, f), emotion), null, seedOf(p), stream, cancelled, pushed);
+                if (qwen.available()) {
+                    return streamQwen(qwen, text, VoiceDesign.forLine(designOf(p, f), emotion), null, seedOf(p), qwenLanguage, stream,
+                            cancelled, pushed);
+                }
             } catch (IOException e) {
                 if (pushed[0] > 0) {
                     return pushed[0] * 1000L / AudioDsp.SVC_RATE;
@@ -92,11 +125,11 @@ public final class SpeechRenderer {
         return pcm.length * 1000L / AudioDsp.SVC_RATE;
     }
 
-    private long streamCloned(VillagerProfile p, VillagerFacts f, String text, String emotion, VoiceOutput.SpeechStream stream,
-                              BooleanSupplier cancelled, long[] pushed) throws IOException, InterruptedException {
+    private long streamCloned(VillagerProfile p, VillagerFacts f, String text, String emotion, String language,
+                              VoiceOutput.SpeechStream stream, BooleanSupplier cancelled, long[] pushed) throws IOException, InterruptedException {
         String voice = voices.voice(p.uuid(), designOf(p, f), seedOf(p), emotion);
         try {
-            return streamQwen(voices.cloner(), text, null, voice, seedOf(p), stream, cancelled, pushed);
+            return streamQwen(voices.cloner(), text, null, voice, seedOf(p), language, stream, cancelled, pushed);
         } catch (IOException e) {
             if (pushed[0] > 0 || e.getMessage() == null || !e.getMessage().contains("unknown voice")) {
                 throw e;
@@ -104,17 +137,17 @@ public final class SpeechRenderer {
             // The Base server restarted and forgot its voices: register them again and retry once.
             voices.forgetRegistrations();
             voice = voices.voice(p.uuid(), designOf(p, f), seedOf(p), emotion);
-            return streamQwen(voices.cloner(), text, null, voice, seedOf(p), stream, cancelled, pushed);
+            return streamQwen(voices.cloner(), text, null, voice, seedOf(p), language, stream, cancelled, pushed);
         }
     }
 
     /** Streams one Qwen3-TTS request into the voice chat stream, resampled to 48 kHz. */
-    private static long streamQwen(QwenTtsClient client, String text, String instructions, String voice, long seed,
+    private static long streamQwen(QwenTtsClient client, String text, String instructions, String voice, long seed, String language,
                                    VoiceOutput.SpeechStream stream, BooleanSupplier cancelled, long[] pushed)
             throws IOException, InterruptedException {
         StreamingResampler rs = new StreamingResampler(QwenTtsClient.SAMPLE_RATE, AudioDsp.SVC_RATE);
         boolean[] started = {false};
-        client.stream(text, instructions, voice, seed, pcm -> {
+        client.stream(text, instructions, voice, seed, language, pcm -> {
             if (cancelled.getAsBoolean()) {
                 return false;
             }
@@ -152,19 +185,24 @@ public final class SpeechRenderer {
 
     /** A whole line as 48 kHz PCM (ambient chatter, dashboard previews). */
     public short[] render(VillagerProfile p, VillagerFacts f, String text, String emotion) throws IOException, InterruptedException {
+        return render(p, f, text, emotion, Languages.ENGLISH);
+    }
+
+    public short[] render(VillagerProfile p, VillagerFacts f, String text, String emotion, String language)
+            throws IOException, InterruptedException {
         Collector c = new Collector();
-        speak(p, f, text, emotion, false, c, () -> false);
+        speak(p, f, text, emotion, language, false, c, () -> false);
         return c.pcm();
     }
 
-    /** Dashboard voice lab: try a voice description directly. */
+    /** Dashboard voice lab: try a voice description directly (starts the voice designer when it's idle). */
     public short[] renderDesign(String design, String emotion, String text, long seed) throws IOException, InterruptedException {
-        if (!qwen.available()) {
+        if (!voices.designerReady()) {
             throw new IOException("Qwen3-TTS is not running");
         }
         StreamingResampler rs = new StreamingResampler(QwenTtsClient.SAMPLE_RATE, AudioDsp.SVC_RATE);
         Collector c = new Collector();
-        qwen.stream(text, VoiceDesign.forLine(design, emotion), null, seed, pcm -> {
+        qwen.stream(text, VoiceDesign.forLine(design, emotion), null, seed, "english", pcm -> {
             c.push(rs.push(pcm, false));
             return true;
         });

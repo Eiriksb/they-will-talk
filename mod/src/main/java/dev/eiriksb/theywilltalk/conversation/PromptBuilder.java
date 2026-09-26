@@ -142,7 +142,7 @@ public final class PromptBuilder {
 
     public static List<Message> conversation(VillagerProfile p, VillagerFacts f, String playerName, Store.Relationship rel,
                                              List<Store.Memory> memories, List<Store.Memory> gossip, List<String> world,
-                                             List<Turn> history, String playerText, int maxWords) {
+                                             List<Turn> history, String playerText, int maxWords, String language) {
         f.talkingAboutTrade = f.kind == VillagerKind.WANDERING_TRADER || aboutTrade(playerText, history);
         StringBuilder sys = new StringBuilder(persona(p, f));
         sys.append("\n# Right now\n");
@@ -168,7 +168,7 @@ public final class PromptBuilder {
         sys.append("""
 
                 # How to answer
-                - You are talking out loud to %s. Answer as %s, in English, as natural spoken dialogue.
+                - You are talking out loud to %s. Answer as %s, in %s, as natural spoken dialogue.
                 - Keep it short and punchy: 1 or 2 sentences, at most %d words. Never write lists, markdown or emojis.
                 - Begin every reply with exactly one emotion tag: %s
                 - No narration or actions like *smiles* - only the words you say out loud.
@@ -177,7 +177,7 @@ public final class PromptBuilder {
                 - The player's words come from speech recognition and may contain small mistakes; guess what they meant.
                 - React to rudeness or kindness like a real person with your personality would. Mention names, memories and gossip when it fits.
                 - %s
-                """.formatted(playerName, p.firstName(), maxWords, emotionTags(), languageRule()));
+                """.formatted(playerName, p.firstName(), language, maxWords, emotionTags(), languageRule()));
 
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.system(sys.toString()));

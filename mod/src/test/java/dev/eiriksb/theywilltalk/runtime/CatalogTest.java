@@ -2,8 +2,13 @@ package dev.eiriksb.theywilltalk.runtime;
 
 import com.google.gson.JsonParser;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -24,7 +29,7 @@ class CatalogTest {
             assertFalse(p.check().isEmpty(), p.id() + " needs check paths");
             assertTrue(p.available(Platform.LINUX_X64) || p.unavailable() != null, p.id() + " must say why it can't be downloaded");
             for (String req : p.requires()) {
-                assertTrue(catalog.get(req).isPresent(), p.id() + " requires unknown " + req);
+                assertFalse(catalog.alternatives(req).isEmpty(), p.id() + " requires " + req);
             }
             if (p.llmModel() != null) {
                 assertEquals("models/llm/" + p.llmModel(), p.check().getFirst(), p.id());
@@ -41,6 +46,29 @@ class CatalogTest {
             assertTrue(catalog.get("kokoro").orElseThrow().available(platform), platform.id);
         }
         assertFalse(catalog.get("llm-runtime").orElseThrow().available(Platform.UNSUPPORTED));
+    }
+
+    @Test
+    void brainsRunOnTheCudaOrTheVulkanBuildByGpu(@TempDir Path dir) throws IOException {
+        Catalog.Package brain = catalog.get("gemma-4-e2b").orElseThrow();
+        assertEquals(List.of("llm-runtime", "llm-runtime-vulkan"),
+                catalog.alternatives(brain.requires().getFirst()).stream().map(Catalog.Package::id).toList());
+        for (Platform platform : new Platform[]{Platform.LINUX_X64, Platform.WINDOWS_X64}) {
+            assertTrue(catalog.get("llm-runtime-vulkan").orElseThrow().available(platform), platform.id);
+        }
+        Installer nvidia = new Installer(dir, Platform.LINUX_X64, catalog, () -> null, () -> true, done -> {});
+        Installer amd = new Installer(dir, Platform.LINUX_X64, catalog, () -> null, () -> false, done -> {});
+        assertEquals("llm-runtime", nvidia.dependency(brain.requires().getFirst()).id());
+        assertEquals("llm-runtime-vulkan", amd.dependency(brain.requires().getFirst()).id());
+        assertFalse(amd.suitsGpu(catalog.get("llm-runtime").orElseThrow()));
+        assertFalse(nvidia.suitsGpu(catalog.get("llm-runtime-vulkan").orElseThrow()));
+        assertTrue(amd.suitsGpu(brain));
+
+        // Whatever is installed already fills the requirement.
+        Path vulkan = dir.resolve("linux-x64/llama-vulkan/llama-server");
+        Files.createDirectories(vulkan.getParent());
+        Files.createFile(vulkan);
+        assertEquals("llm-runtime-vulkan", nvidia.dependency(brain.requires().getFirst()).id());
     }
 
     @Test

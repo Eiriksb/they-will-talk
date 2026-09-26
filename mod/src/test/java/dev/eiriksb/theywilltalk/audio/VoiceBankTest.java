@@ -120,7 +120,7 @@ class VoiceBankTest {
     }
 
     private VoiceBank bank() {
-        return new VoiceBank(tmp, new QwenTtsClient(designer::url), new QwenTtsClient(cloner::url));
+        return new VoiceBank(tmp, new QwenTtsClient(designer::url), new QwenTtsClient(cloner::url), () -> true);
     }
 
     /** A Qwen3-TTS server that answers every request and remembers them. */

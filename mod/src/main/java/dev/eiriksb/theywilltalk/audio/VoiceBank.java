@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
 
 /**
@@ -74,23 +75,31 @@ public final class VoiceBank {
     private final Path dir;
     private final QwenTtsClient designer;
     private final QwenTtsClient cloner;
+    private final BooleanSupplier designerReady;
     private final Map<UUID, Object> locks = new ConcurrentHashMap<>();
     private final Set<String> registered = ConcurrentHashMap.newKeySet();
     private volatile String registeredOn;
 
     /**
-     * @param designer the VoiceDesign server, which invents voices from descriptions
-     * @param cloner   the Base server, which speaks in registered (cloned) voices
+     * @param designer      the VoiceDesign server, which invents voices from descriptions
+     * @param cloner        the Base server, which speaks in registered (cloned) voices
+     * @param designerReady starts the designer when it's idle (it only runs while needed); false if it can't
      */
-    public VoiceBank(Path dir, QwenTtsClient designer, QwenTtsClient cloner) {
+    public VoiceBank(Path dir, QwenTtsClient designer, QwenTtsClient cloner, BooleanSupplier designerReady) {
         this.dir = dir;
         this.designer = designer;
         this.cloner = cloner;
+        this.designerReady = designerReady;
     }
 
-    /** Both Qwen3-TTS servers are running, so lines can be cloned. */
+    /** The voice cloner runs, so lines can be cloned (the designer is started when a new voice is needed). */
     public boolean available() {
-        return designer.available() && cloner.available();
+        return cloner.available();
+    }
+
+    /** Makes sure the voice designer runs, starting it if needed. */
+    public boolean designerReady() {
+        return designerReady.getAsBoolean();
     }
 
     public QwenTtsClient cloner() {
@@ -129,6 +138,9 @@ public final class VoiceBank {
                 if (custom != null) {
                     Files.copy(custom.wav(), neutral);
                 } else {
+                    if (!designerReady.getAsBoolean()) {
+                        throw new IOException("the Qwen3-TTS voice designer isn't available");
+                    }
                     write(neutral, designer.wav(Mood.NEUTRAL.script, VoiceDesign.forLine(design, "neutral"), null, seed));
                 }
             }

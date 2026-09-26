@@ -48,10 +48,12 @@ public final class QwenTtsClient {
 
     /**
      * @param instructions voice description (VoiceDesign model); must be null for a cloned {@code voice} (Base model)
+     * @param language     Qwen3-TTS language label ("english", "german"...)
      */
-    public Result stream(String text, String instructions, String voice, long seed, PcmSink sink) throws IOException, InterruptedException {
+    public Result stream(String text, String instructions, String voice, long seed, String language, PcmSink sink)
+            throws IOException, InterruptedException {
         long t0 = System.nanoTime();
-        HttpResponse<InputStream> resp = speech(text, instructions, voice, seed, "pcm");
+        HttpResponse<InputStream> resp = speech(text, instructions, voice, seed, language, "pcm");
         long first = -1;
         long samples = 0;
         byte[] buf = new byte[4800]; // 100 ms
@@ -90,7 +92,7 @@ public final class QwenTtsClient {
 
     /** A whole line as a 24 kHz WAV file (for voice reference clips). */
     public byte[] wav(String text, String instructions, String voice, long seed) throws IOException, InterruptedException {
-        try (InputStream in = speech(text, instructions, voice, seed, "wav").body()) {
+        try (InputStream in = speech(text, instructions, voice, seed, "english", "wav").body()) {
             return in.readAllBytes();
         }
     }
@@ -112,12 +114,12 @@ public final class QwenTtsClient {
         }
     }
 
-    private HttpResponse<InputStream> speech(String text, String instructions, String voice, long seed, String format)
+    private HttpResponse<InputStream> speech(String text, String instructions, String voice, long seed, String language, String format)
             throws IOException, InterruptedException {
         JsonObject body = new JsonObject();
         body.addProperty("input", text);
         body.addProperty("response_format", format);
-        body.addProperty("language", "english");
+        body.addProperty("language", language);
         if (instructions != null && !instructions.isBlank()) {
             body.addProperty("instructions", instructions);
         }

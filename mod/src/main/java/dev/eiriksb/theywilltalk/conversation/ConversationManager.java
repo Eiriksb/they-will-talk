@@ -67,6 +67,9 @@ public final class ConversationManager {
     private final Supplier<VoiceOutput> voice;
     private final LiveFeed feed;
     private final Supplier<Boolean> llmReady;
+    private final boolean sipher = net.neoforged.fml.ModList.get().isLoaded("sipher");
+    /** The language each player last spoke in (from Sipher). */
+    private final Map<UUID, String> playerLanguages = new ConcurrentHashMap<>();
 
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
     private final Map<UUID, Speaker> speakers = new ConcurrentHashMap<>();
@@ -369,6 +372,7 @@ public final class ConversationManager {
         }
 
         Turn turn = new Turn(villager, player, pid, playerName, text, channel, originalText, lang, facts, profile, adapter);
+        turn.replyLang = replyLanguage(channel, lang, pid);
         sp.current = turn;
         if (player != null) {
             sp.attentionTarget = new WeakReference<>(player);
@@ -414,8 +418,11 @@ public final class ConversationManager {
                 store.addMessage(session.conversationId, vid, turn.playerId, "player", turn.playerName, turn.text, turn.originalText,
                         turn.lang, null, 0);
             }
+            // Answering in the player's language: give the model their own words rather than the English translation.
+            boolean ownLanguage = !turn.replyLang.equals(Languages.ENGLISH) && turn.originalText != null && !turn.originalText.isBlank();
             List<LlmClient.Message> messages = PromptBuilder.conversation(profile, turn.facts, turn.playerName, rel, memories, gossip,
-                    world, history, turn.text, TwtConfig.MAX_REPLY_WORDS.get());
+                    world, history, ownLanguage ? turn.originalText : turn.text, TwtConfig.MAX_REPLY_WORDS.get(),
+                    Languages.name(turn.replyLang));
 
             VoiceOutput out = voice.get();
             VoiceOutput.SpeechStream stream = out.available() ? out.open(turn.villager.get(), TwtConfig.VOICE_DISTANCE.get().floatValue())
@@ -461,7 +468,7 @@ public final class ConversationManager {
             String reply = spoken.isEmpty() ? SentenceStream.clean(result.text()) : spoken.toString().trim();
             String emotion = ss.emotion();
             turnsTotal++;
-            store.addMessage(session.conversationId, vid, turn.playerId, "villager", profile.name(), reply, null, "en", emotion,
+            store.addMessage(session.conversationId, vid, turn.playerId, "villager", profile.name(), reply, null, turn.replyLang, emotion,
                     turn.firstAudioMs);
             if (!isGreeting) {
                 synchronized (session.history) {
@@ -515,9 +522,10 @@ public final class ConversationManager {
                            StringBuilder spoken, long t0) {
         boolean audio = stream != VoiceOutput.SpeechStream.NOOP;
         // Qwen3-TTS VoiceDesign imagines the voice anew for every request, so a reply split into sentences would change
-        // voice at every full stop: it gets the whole reply at once (the LLM finishes a short reply in well under a
-        // second). The voice server's cast voices are fixed and can start on the first sentence.
-        boolean wholeReply = audio && speech.expressive();
+        // voice at every full stop: without voice cloning it gets the whole reply at once (the LLM finishes a short reply
+        // in well under a second). Cloned voices and the voice server's cast voices are fixed and start on the first
+        // sentence.
+        boolean wholeReply = audio && speech.expressive() && !speech.cloning();
         List<String> held = new ArrayList<>();
         boolean first = true;
         try {
@@ -563,7 +571,7 @@ public final class ConversationManager {
             // Note when the first audio actually goes out (the engine may still be generating).
             VoiceOutput.SpeechStream timed = first ? new TimedStream(stream, firstPush) : stream;
             try {
-                speech.speak(profile, turn.facts, text, emotion, first, timed, () -> turn.cancelled);
+                speech.speak(profile, turn.facts, text, emotion, turn.replyLang, first, timed, () -> turn.cancelled);
             } catch (Exception e) {
                 TheyWillTalk.LOGGER.debug("TTS failed, subtitles only: {}", e.toString());
             }
@@ -583,7 +591,7 @@ public final class ConversationManager {
                 timer.schedule(() -> server.execute(() -> {
                     Entity v = turn.villager.get();
                     if (v != null && !turn.cancelled) {
-                        caption(v, profile, turn.facts.kind, line);
+                        caption(v, profile, turn.facts.kind, line, turn.replyLang);
                     }
                 }), delayMs + offsetMs, TimeUnit.MILLISECONDS);
             }
@@ -659,10 +667,11 @@ public final class ConversationManager {
     // Output helpers
     // =========================================================================================================
 
-    private void subtitle(Entity villager, VillagerProfile profile, VillagerKind kind, String text) {
+    private void subtitle(Entity villager, VillagerProfile profile, VillagerKind kind, String rawText) {
         if (!TwtConfig.SUBTITLES.get()) {
             return;
         }
+        String text = forPlayers(rawText);
         ChatFormatting color = kindColor(kind);
         MutableComponent name = Component.literal(profile.name()).withStyle(Style.EMPTY.withColor(color)
                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
@@ -683,11 +692,43 @@ public final class ConversationManager {
     }
 
     /** The sentence being spoken right now, shown above the hotbar of players who can hear it. */
-    private void caption(Entity villager, VillagerProfile profile, VillagerKind kind, String text) {
+    /** What players see of a villager's line: swear words censored when bleeping is on, slurs always. */
+    static String forPlayers(String text) {
+        return Profanity.censor(text, TwtConfig.BLEEP_SWEARING.get());
+    }
+
+    /** A villager's line as a Sipher caption bubble above them (players with Sipher see it in their language). */
+    private void bubble(Entity villager, String language, String rawText, double range) {
+        if (sipher && TwtConfig.SIPHER_BUBBLES.get()) {
+            dev.eiriksb.theywilltalk.integration.SipherBridge.caption(villager, language, forPlayers(rawText), range);
+        }
+    }
+
+    /**
+     * The language a villager answers in: the player's spoken language (from Sipher) when that's on and the Qwen3-TTS
+     * voices can speak it; otherwise English. Greetings use the language the player last spoke in.
+     */
+    private String replyLanguage(Channel channel, String lang, UUID player) {
+        String spoken = Languages.base(lang);
+        if (channel == Channel.VOICE && !spoken.isEmpty() && !spoken.equals("und")) {
+            playerLanguages.put(player, spoken);
+        }
+        if (!TwtConfig.REPLY_IN_PLAYER_LANGUAGE.get() || !speech.expressive()) {
+            return Languages.ENGLISH;
+        }
+        String candidate = channel == Channel.VOICE ? spoken
+                : channel == Channel.GREETING ? playerLanguages.getOrDefault(player, Languages.ENGLISH) : Languages.ENGLISH;
+        return Languages.speakable(candidate) ? Languages.base(candidate) : Languages.ENGLISH;
+    }
+
+    /** One sentence as it's spoken: a Sipher bubble above the villager and the action bar line. */
+    private void caption(Entity villager, VillagerProfile profile, VillagerKind kind, String rawText, String language) {
+        double range = TwtConfig.VOICE_DISTANCE.get();
+        bubble(villager, language, rawText, range);
         if (!TwtConfig.SUBTITLES.get()) {
             return;
         }
-        double range = TwtConfig.VOICE_DISTANCE.get();
+        String text = forPlayers(rawText);
         Component line = Component.literal(profile.firstName() + ": ").withStyle(kindColor(kind))
                 .append(Component.literal(text).withStyle(ChatFormatting.WHITE));
         for (ServerPlayer p : ((ServerLevel) villager.level()).players()) {
@@ -858,6 +899,7 @@ public final class ConversationManager {
                     server.execute(() -> {
                         Gestures.react(who, facts.kind, emotion);
                         subtitle(who, prof, facts.kind, text);
+                        bubble(who, Languages.ENGLISH, text, TwtConfig.VOICE_DISTANCE.get() * 0.75);
                     });
                     Thread.sleep(Math.max(1200, playMs + 350));
                 }
@@ -962,6 +1004,8 @@ public final class ConversationManager {
         volatile CompletableFuture<LlmClient.Result> llmFuture;
         volatile VoiceOutput.SpeechStream stream;
         volatile long firstAudioMs;
+        /** Language the villager answers in (the player's, when the voices speak it). */
+        volatile String replyLang = Languages.ENGLISH;
         final BlockingQueue<String> sentences = new LinkedBlockingQueue<>();
 
         Turn(Entity villager, ServerPlayer player, UUID playerId, String playerName, String text, Channel channel, String originalText,

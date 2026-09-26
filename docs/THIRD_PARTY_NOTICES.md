@@ -6,7 +6,7 @@ from its original publisher when an admin clicks *Install* on the dashboard's Mo
 
 | Component | Used for | License |
 |---|---|---|
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`, build b11160) | runs the villager brain (LLM) on the GPU | MIT |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`, build b11160, CUDA or Vulkan build) | runs the villager brain (LLM) on the GPU | MIT |
 | NVIDIA CUDA runtime (`libcudart`, `libcublas`, `libcublasLt` 12.8) | GPU acceleration | NVIDIA CUDA EULA - redistributable runtime components |
 | [Gemma 4 E2B-it / E4B-it](https://huggingface.co/google/gemma-4-E2B-it) (QAT GGUFs by Unsloth) | the villager brain | Apache-2.0 |
 | Huihui Gemma 4 E2B/E4B abliterated ([huihui-ai](https://huggingface.co/huihui-ai)) | optional uncensored villager brain | Apache-2.0 |
