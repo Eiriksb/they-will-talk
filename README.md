@@ -138,7 +138,7 @@ from the Models page. GitHub Actions (`.github/workflows/build.yml`) builds it o
 commit; download it from the run's artifacts, or push a `v*` tag to publish it as a release. For servers without internet access, an all-in-one bundle:
 
 ```bash
-scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.1.0-linux-x64.zip
+scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.2.0-linux-x64.zip
 ```
 
 The Qwen3-TTS server has no upstream binaries, so this project publishes its own (release `qwentts-6a3e912`). To
