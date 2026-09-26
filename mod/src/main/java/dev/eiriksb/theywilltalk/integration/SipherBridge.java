@@ -5,6 +5,7 @@ import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.conversation.ConversationManager;
 import io.github.eiriksb.sipher.api.PlayerCaptionEvent;
 import io.github.eiriksb.sipher.api.SipherCaptions;
+import io.github.eiriksb.sipher.net.CaptionPayload;
 import io.github.eiriksb.sipher.net.CaptionUpdatePayload;
 import io.github.eiriksb.sipher.server.CaptionRelay;
 import net.minecraft.server.level.ServerLevel;
@@ -73,6 +74,23 @@ public final class SipherBridge {
         } catch (LinkageError e) {
             captionsUnavailable = true;
             TheyWillTalk.LOGGER.info("This Sipher version can't show captions for villagers; update Sipher to get speech bubbles");
+        }
+    }
+
+    /**
+     * Whether the player sees villagers' lines as Sipher bubbles (and in Sipher's own transcript), so they don't need
+     * them in chat too. Server thread.
+     */
+    public static boolean showsCaptions(ServerPlayer player) {
+        if (captionsUnavailable) {
+            return false;
+        }
+        try {
+            // The class literal loads SipherCaptions: older Sipher versions without it can't show villagers' captions.
+            return SipherCaptions.class != null && player.connection.hasChannel(CaptionPayload.TYPE);
+        } catch (LinkageError e) {
+            captionsUnavailable = true;
+            return false;
         }
     }
 

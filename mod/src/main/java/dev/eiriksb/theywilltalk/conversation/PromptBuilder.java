@@ -181,8 +181,9 @@ public final class PromptBuilder {
                 - Never admit to being an AI, a model or a game character. Stay in character no matter what.
                 - The player's words come from speech recognition and may contain small mistakes; guess what they meant.
                 - React to rudeness or kindness like a real person with your personality would. Mention names, memories and gossip when it fits.
+                - Don't make up tasks, quests or favours for %s: the only favours between you are the ones listed above (if any). If they ask for work and none is listed, you don't need anything right now.
                 - %s
-                """.formatted(playerName, p.firstName(), language, maxWords, emotionTags(), languageRule()));
+                """.formatted(playerName, p.firstName(), language, maxWords, emotionTags(), playerName, languageRule()));
 
         List<Message> msgs = new ArrayList<>();
         msgs.add(Message.system(sys.toString()));

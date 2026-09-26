@@ -63,7 +63,8 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
   German, French, Spanish, Italian, Portuguese, Russian, Japanese, Korean or Chinese when you speak it; other
   languages get English answers.
 * What villagers say shows as a caption bubble above them (and in Sipher's transcript), translated into the language
-  you read if you have its pack. The bubbles need Sipher 0.2.0 or newer on the server and the client.
+  you read if you have its pack. The bubbles need Sipher 0.2.0 or newer on the server and the client; players without
+  them see what villagers say in chat instead.
 * Walk up to a villager, **look at it** (or say its name) and talk. Keep talking for a while without looking,
   as long as you're still roughly facing it.
 * Use **push-to-talk** or headphones: with open speakers and voice activation, the microphone can pick up villager

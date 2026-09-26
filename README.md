@@ -51,7 +51,7 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
   while new voices are being designed and stops after a few idle minutes, leaving the GPU memory to the brain.
   Audio streams into a Simple Voice Chat entity channel (Opus in AUDIO mode), so it comes from the villager and fades
   with distance. What villagers say also shows as a Sipher caption bubble above them (Sipher 0.2.0+), translated
-  into each player's reading language, and as a subtitle.
+  into each player's reading language; players without Sipher get it as a chat subtitle.
 * **Swearing.** With *crude language* on, villagers may swear. By default it's bleeped YouTube style: `f***` in
   subtitles, bubbles and the map, and a beep in the voice (`Profanity`). Turning *bleep swear words* off lets them
   swear uncensored. Slurs are always censored.
@@ -138,7 +138,7 @@ from the Models page. GitHub Actions (`.github/workflows/build.yml`) builds it o
 commit; download it from the run's artifacts, or push a `v*` tag to publish it as a release. For servers without internet access, an all-in-one bundle:
 
 ```bash
-scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.2.0-linux-x64.zip
+scripts/package.sh linux-x64      # -> dist/TheyWillTalk-0.2.1-linux-x64.zip
 ```
 
 The Qwen3-TTS server has no upstream binaries, so this project publishes its own (release `qwentts-6a3e912`). To

@@ -110,7 +110,7 @@ public final class TwtConfig {
                 .defineInRange("activeConversationSeconds", 20, 5, 600);
         MAX_REPLY_WORDS = b.comment("Soft limit for how long a single villager reply is.")
                 .defineInRange("maxReplyWords", 30, 10, 200);
-        SUBTITLES = b.comment("Show what villagers say in chat.")
+        SUBTITLES = b.comment("Show what villagers say in chat (players who see Sipher's bubbles above the villagers get them there instead).")
                 .define("subtitles", true);
         VOICE_DISTANCE = b.comment("How far (blocks) a villager's voice carries.")
                 .defineInRange("voiceDistance", 24.0, 4.0, 128.0);

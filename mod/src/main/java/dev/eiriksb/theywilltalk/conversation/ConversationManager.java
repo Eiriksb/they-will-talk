@@ -104,6 +104,7 @@ public final class ConversationManager {
     /** What villagers said recently, to recognise their own voice coming back through a player's microphone. */
     private final java.util.concurrent.ConcurrentLinkedDeque<SpokenLine> recentLines = new java.util.concurrent.ConcurrentLinkedDeque<>();
     private final Map<String, Deque<Long>> replyTimes = new ConcurrentHashMap<>();
+    private final Map<String, Long> hinted = new ConcurrentHashMap<>();
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "twt-subtitles");
         t.setDaemon(true);
@@ -163,12 +164,21 @@ public final class ConversationManager {
         if (text == null || text.isBlank()) {
             return false;
         }
-        if (channel == Channel.VOICE && isEcho(player, text)) {
-            TheyWillTalk.LOGGER.debug("Ignored voice line from {} (villager echo): {}", player.getGameProfile().getName(), text);
-            return false;
+        if (channel == Channel.VOICE) {
+            SpokenLine echo = echoOf(player, text);
+            if (echo != null) {
+                TheyWillTalk.LOGGER.info("Ignored a voice line from {}: it sounded like {}'s own voice through their microphone ({})",
+                        player.getGameProfile().getName(), echo.speaker(), text);
+                hint(player, "echo", "(That sounded like " + echo.speaker() + "'s own voice coming through your microphone: "
+                        + "headphones or push-to-talk help)");
+                return false;
+            }
         }
         Entity target = findTarget(player, text);
         if (target == null) {
+            if (channel == Channel.VOICE && nobodyElseToTalkTo(player)) {
+                hint(player, "unaddressed", "(Look at a villager or say their name to talk to them)");
+            }
             return false;
         }
         if (!llmReady.get()) {
@@ -278,41 +288,54 @@ public final class ConversationManager {
         }
     }
 
+    /** How long after a villager's line ends its echo can still arrive (the recogniser waits for a pause, then transcribes). */
+    private static final long ECHO_TAIL_MS = 8_000;
+
     /**
-     * True when a "voice line" is most likely a villager's own voice picked up by the player's microphone
-     * (speakers instead of headphones): a nearby villager is talking right now, or the words match what one just said.
+     * The villager line a "voice line" most likely is, picked up by the player's microphone (speakers instead of
+     * headphones) while it played or just after; null when the player said it. Players can talk while villagers do
+     * (and interrupt them): only lines that repeat a villager's words count as echoes.
      */
-    private boolean isEcho(ServerPlayer player, String text) {
+    private SpokenLine echoOf(ServerPlayer player, String text) {
         long now = System.currentTimeMillis();
+        recentLines.removeIf(l -> now > l.until() + ECHO_TAIL_MS);
+        List<String> words = EchoFilter.words(text);
         double range = TwtConfig.VOICE_DISTANCE.get();
-        for (Speaker sp : speakers.values()) {
-            Entity v = sp.entity.get();
-            if (v != null && v.level() == player.level() && sp.speakingUntil + 1500 > now && v.distanceTo(player) <= range) {
-                return true;
-            }
-        }
-        recentLines.removeIf(l -> now - l.ts > 30_000);
-        java.util.Set<String> words = EchoFilter.words(text);
-        if (words.isEmpty()) {
-            return false;
-        }
         for (SpokenLine l : recentLines) {
-            if (l.level == player.level() && l.pos.distanceTo(player.position()) <= range && EchoFilter.isEcho(words, l.words)) {
-                return true;
+            if (l.level() == player.level() && l.pos().distanceTo(player.position()) <= range && EchoFilter.isEcho(words, l.words())) {
+                return l;
             }
         }
-        return false;
+        return null;
+    }
+
+    /** Players nearby are probably talking to each other rather than to a villager they're not looking at. */
+    private boolean nobodyElseToTalkTo(ServerPlayer player) {
+        double radius = TwtConfig.LISTEN_RADIUS.get();
+        return !player.serverLevel().getEntities(player, player.getBoundingBox().inflate(radius), villagers::canTalk).isEmpty()
+                && player.serverLevel().players().stream().noneMatch(o -> o != player && !o.isSpectator()
+                && o.distanceTo(player) <= TwtConfig.VOICE_DISTANCE.get());
+    }
+
+    /** A gentle action-bar hint, at most every few minutes per player and kind. */
+    private void hint(ServerPlayer player, String kind, String text) {
+        long now = System.currentTimeMillis();
+        String key = player.getUUID() + "|" + kind;
+        Long last = hinted.get(key);
+        if (last != null && now - last < 3 * 60_000L) {
+            return;
+        }
+        hinted.put(key, now);
+        player.displayClientMessage(Component.literal(text).withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC), true);
     }
 
     private void rememberSpoken(Entity v, String text, long playsUntil) {
-        recentLines.add(new SpokenLine(System.currentTimeMillis(), v.level(), v.position(), EchoFilter.words(text)));
-        Speaker sp = speakers.get(v.getUUID());
-        if (sp != null) {
-            sp.speakingUntil = Math.max(sp.speakingUntil, playsUntil);
-        }
+        String name = nameOf(v);
+        recentLines.add(new SpokenLine(playsUntil, v.level(), v.position(), EchoFilter.words(text), name == null ? "a villager" : name));
     }
 
-    private record SpokenLine(long ts, net.minecraft.world.level.Level level, Vec3 pos, java.util.Set<String> words) {}
+    /** @param until when the line finishes playing */
+    private record SpokenLine(long until, net.minecraft.world.level.Level level, Vec3 pos, List<String> words, String speaker) {}
 
     /** Forwards to a stream and records when the first non-empty audio was pushed. */
     private record TimedStream(VoiceOutput.SpeechStream inner, long[] firstPush) implements VoiceOutput.SpeechStream {
@@ -570,9 +593,9 @@ public final class ConversationManager {
             if (!turn.cancelled) {
                 TheyWillTalk.LOGGER.warn("Conversation with {} failed: {}", profile.name(), e.toString());
                 server.execute(() -> {
-                    Entity v = turn.villager.get();
-                    if (v != null && turn.player != null) {
-                        subtitle(v, profile, turn.facts.kind, "Hrmm...? (" + profile.firstName() + " seems lost in thought)");
+                    if (turn.player != null) {
+                        turn.player.displayClientMessage(Component.literal("Hrmm...? (" + profile.firstName()
+                                + " seems lost in thought. Try again.)").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC), true);
                     }
                 });
             }
@@ -631,6 +654,15 @@ public final class ConversationManager {
             });
         }
         spoken.append(text).append(' ');
+        Entity speakerEntity = turn.villager.get();
+        if (speakerEntity != null) {
+            // Known before it's heard, so its echo in a player's microphone is recognised however soon it comes back.
+            long at = System.currentTimeMillis() + (audio ? stream.queuedMs() : 0);
+            for (String line : lines) {
+                at += line.length() * SPOKEN_MS_PER_CHAR;
+                rememberSpoken(speakerEntity, line, at + 2_000);
+            }
+        }
         long delayMs = 0;
         long[] firstPush = {-1};
         if (audio && !turn.cancelled) {
@@ -648,20 +680,14 @@ public final class ConversationManager {
             turn.firstAudioMs = at - t0 + delayMs;
             lastLatencyMs = turn.firstAudioMs;
         }
-        Entity speakerEntity = turn.villager.get();
         long offsetMs = 0; // later sentences of a whole reply are captioned roughly when they're reached
         for (String line : lines) {
-            if (speakerEntity != null) {
-                rememberSpoken(speakerEntity, line, System.currentTimeMillis() + stream.queuedMs());
-            }
-            if (audio) {
-                timer.schedule(() -> server.execute(() -> {
-                    Entity v = turn.villager.get();
-                    if (v != null && !turn.cancelled) {
-                        caption(v, profile, turn.facts.kind, line, turn.replyLang);
-                    }
-                }), delayMs + offsetMs, TimeUnit.MILLISECONDS);
-            }
+            timer.schedule(() -> server.execute(() -> {
+                Entity v = turn.villager.get();
+                if (v != null && !turn.cancelled) {
+                    caption(v, line, turn.replyLang);
+                }
+            }), delayMs + offsetMs, TimeUnit.MILLISECONDS);
             offsetMs += line.length() * SPOKEN_MS_PER_CHAR;
         }
     }
@@ -746,7 +772,7 @@ public final class ConversationManager {
         double range = TwtConfig.VOICE_DISTANCE.get();
         for (ServerPlayer p : ((ServerLevel) villager.level()).players()) {
             double d = p.distanceTo(villager);
-            if (d > range) {
+            if (d > range || seesBubbles(p)) {
                 continue;
             }
             MutableComponent line = Component.empty()
@@ -762,6 +788,11 @@ public final class ConversationManager {
     /** What players see of a villager's line: swear words censored when bleeping is on, slurs always. */
     static String forPlayers(String text) {
         return Profanity.censor(text, TwtConfig.BLEEP_SWEARING.get());
+    }
+
+    /** Players whose Sipher shows villagers' lines as bubbles and in its transcript get them there instead of in chat. */
+    private boolean seesBubbles(ServerPlayer player) {
+        return sipher && TwtConfig.SIPHER_BUBBLES.get() && dev.eiriksb.theywilltalk.integration.SipherBridge.showsCaptions(player);
     }
 
     /** A villager's line as a Sipher caption bubble above them (players with Sipher see it in their language). */
@@ -788,21 +819,9 @@ public final class ConversationManager {
         return Languages.speakable(candidate) ? Languages.base(candidate) : Languages.ENGLISH;
     }
 
-    /** One sentence as it's spoken: a Sipher bubble above the villager and the action bar line. */
-    private void caption(Entity villager, VillagerProfile profile, VillagerKind kind, String rawText, String language) {
-        double range = TwtConfig.VOICE_DISTANCE.get();
-        bubble(villager, language, rawText, range);
-        if (!TwtConfig.SUBTITLES.get()) {
-            return;
-        }
-        String text = forPlayers(rawText);
-        Component line = Component.literal(profile.firstName() + ": ").withStyle(kindColor(kind))
-                .append(Component.literal(text).withStyle(ChatFormatting.WHITE));
-        for (ServerPlayer p : ((ServerLevel) villager.level()).players()) {
-            if (p.distanceTo(villager) <= range) {
-                p.displayClientMessage(line, true);
-            }
-        }
+    /** One sentence as it's spoken: a Sipher bubble above the villager (players without Sipher have it in chat). */
+    private void caption(Entity villager, String rawText, String language) {
+        bubble(villager, language, rawText, TwtConfig.VOICE_DISTANCE.get());
     }
 
     private static ChatFormatting kindColor(VillagerKind kind) {
@@ -1049,7 +1068,6 @@ public final class ConversationManager {
         final Deque<Pending> queue = new ArrayDeque<>();
         volatile WeakReference<ServerPlayer> attentionTarget;
         volatile long attentionUntil;
-        volatile long speakingUntil;
 
         Speaker(Entity e) {
             this.entity = new WeakReference<>(e);

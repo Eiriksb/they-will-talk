@@ -52,7 +52,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 
 /**
  * Villagers taking the initiative. They walk up to players they want to talk to - to greet a friend, give a gift, ask
@@ -71,9 +70,6 @@ public final class VillagerEvents implements ConversationManager.Hooks {
     private static final long WALK_TIMEOUT_MS = 30_000;
     private static final long OFFER_TTL_MS = 4 * 60_000L;
     private static final long MINUTE = 60_000L;
-    private static final Pattern ASKS_FOR_WORK = Pattern.compile("(?iu)\\b(quests?|tasks?|errands?|missions?|jobs? for me|work for me|"
-            + "any work|anything (i|we) can do|need (any |some )?help|can (i|we) help|help you|favou?rs?|oppdrag|aufgaben?|auftrag|"
-            + "tareas?|misi[oó]n|qu[eê]tes?|travail|lavoro|incarichi)\\b");
 
     enum Reason { GREET, GIFT, OFFER, COLLECT }
 
@@ -789,7 +785,7 @@ public final class VillagerEvents implements ConversationManager.Hooks {
                 lines.add(e.villagerName + " gave them a letter for you, but they don't have it on them.");
             }
         }
-        if (playerText != null && TwtConfig.ERRANDS.get() && ASKS_FOR_WORK.matcher(playerText).find() && errandBetween(vid, pid) == null) {
+        if (playerText != null && TwtConfig.ERRANDS.get() && AsksForWork.test(playerText) && errandBetween(vid, pid) == null) {
             if (!canTakeErrand(p)) {
                 lines.add("They asked if you have work for them, but they're already busy with enough favours: tell them to finish those first.");
             } else {

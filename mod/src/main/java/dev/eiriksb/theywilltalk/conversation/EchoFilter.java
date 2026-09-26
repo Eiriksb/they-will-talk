@@ -1,24 +1,27 @@
 package dev.eiriksb.theywilltalk.conversation;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Word-overlap test used to spot a villager's own voice coming back through a player's microphone (and being
- * transcribed as if the player said it). Speech recognition rarely returns identical text, so this compares
- * word sets rather than strings.
+ * Spots a villager's own voice coming back through a player's microphone (and being transcribed as if the player said
+ * it). An echo repeats the villager's words in order, or all of a short line; an answer may reuse a few of their words
+ * ("Hello, David!", "Sure, I'll bring you the flint") but not whole stretches of what they said. Speech recognition
+ * rarely returns identical text, so this compares word pairs rather than strings.
  */
 final class EchoFilter {
-    private static final Pattern WORD = Pattern.compile("[\\p{L}']+");
-    static final double THRESHOLD = 0.45;
+    private static final Pattern WORD = Pattern.compile("[\\p{L}\\p{N}']+");
 
     private EchoFilter() {}
 
-    static Set<String> words(String text) {
-        Set<String> out = new HashSet<>();
+    /** The words of a line in order, lower case, without one-letter words. */
+    static List<String> words(String text) {
+        List<String> out = new ArrayList<>();
         Matcher m = WORD.matcher(text.toLowerCase(Locale.ROOT));
         while (m.find()) {
             if (m.group().length() > 1) {
@@ -28,21 +31,32 @@ final class EchoFilter {
         return out;
     }
 
-    /** Share of the shorter text's words that also appear in the other. */
-    static double similarity(Set<String> a, Set<String> b) {
-        if (a.isEmpty() || b.isEmpty()) {
-            return 0;
+    static boolean isEcho(List<String> heard, List<String> spoken) {
+        if (heard.isEmpty() || spoken.isEmpty()) {
+            return false;
         }
-        int common = 0;
-        for (String w : a) {
-            if (b.contains(w)) {
-                common++;
-            }
+        // A stretch of the villager's line: most of what was heard are word pairs they said, in that order.
+        Set<String> spokenPairs = pairs(spoken);
+        List<String> heardPairs = new ArrayList<>();
+        for (int i = 1; i < heard.size(); i++) {
+            heardPairs.add(heard.get(i - 1) + ' ' + heard.get(i));
         }
-        return (double) common / Math.min(a.size(), b.size());
+        long matching = heardPairs.stream().filter(spokenPairs::contains).count();
+        if (matching >= 2 && matching >= heardPairs.size() * 0.5) {
+            return true;
+        }
+        // A short line coming back whole ("Yes!", "Hello there!"): nearly the same words both ways.
+        Set<String> h = new HashSet<>(heard);
+        Set<String> s = new HashSet<>(spoken);
+        long common = h.stream().filter(s::contains).count();
+        return common >= h.size() * 0.75 && common >= s.size() * 0.6;
     }
 
-    static boolean isEcho(Set<String> heard, Set<String> spoken) {
-        return similarity(heard, spoken) >= THRESHOLD;
+    private static Set<String> pairs(List<String> words) {
+        Set<String> out = new HashSet<>();
+        for (int i = 1; i < words.size(); i++) {
+            out.add(words.get(i - 1) + ' ' + words.get(i));
+        }
+        return out;
     }
 }
