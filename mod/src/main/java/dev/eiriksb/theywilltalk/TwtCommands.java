@@ -1,6 +1,7 @@
 package dev.eiriksb.theywilltalk;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.LongArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import dev.eiriksb.theywilltalk.conversation.ConversationManager;
@@ -33,6 +34,10 @@ import java.util.Comparator;
  * /twt relay &lt;player&gt; &lt;lang&gt; &lt;text&gt;  push a line through Sipher's real caption relay    (op)
  * /twt info &lt;villager&gt;                 who is this villager?                              (op)
  * /twt restart                         restart the AI processes                           (op)
+ * /twt event &lt;villager&gt; &lt;player&gt; &lt;what&gt;  greet | gift | errand | fetch | hunt | deliver     (op)
+ * /twt errands                         your errands, with buttons
+ * /twt errand accept|decline|abandon &lt;id&gt;
+ * /twt dev bot &lt;name&gt;                 a stand-in player for testing (dev runs only)      (op)
  * </pre>
  */
 final class TwtCommands {
@@ -56,7 +61,97 @@ final class TwtCommands {
                                 .then(Commands.argument("lang", StringArgumentType.word())
                                         .then(Commands.argument("text", StringArgumentType.greedyString()).executes(TwtCommands::relay)))))
                 .then(Commands.literal("info").requires(s -> s.hasPermission(2))
-                        .then(Commands.argument("villager", EntityArgument.entity()).executes(TwtCommands::info))));
+                        .then(Commands.argument("villager", EntityArgument.entity()).executes(TwtCommands::info)))
+                .then(Commands.literal("event").requires(s -> s.hasPermission(2))
+                        .then(Commands.argument("villager", EntityArgument.entity())
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("what", StringArgumentType.word())
+                                                .suggests((c, b) -> net.minecraft.commands.SharedSuggestionProvider.suggest(
+                                                        java.util.List.of("greet", "gift", "errand", "fetch", "hunt", "deliver"), b))
+                                                .executes(TwtCommands::event)))))
+                .then(Commands.literal("errands").executes(TwtCommands::errands))
+                .then(Commands.literal("errand")
+                        .then(Commands.literal("accept").then(Commands.argument("id", LongArgumentType.longArg(1))
+                                .executes(ctx -> errand(ctx, "accept"))))
+                        .then(Commands.literal("decline").then(Commands.argument("id", LongArgumentType.longArg(1))
+                                .executes(ctx -> errand(ctx, "decline"))))
+                        .then(Commands.literal("abandon").then(Commands.argument("id", LongArgumentType.longArg(1))
+                                .executes(ctx -> errand(ctx, "abandon")))))
+                .then(Commands.literal("dev").requires(s -> s.hasPermission(3) && Boolean.getBoolean("theywilltalk.devCommands"))
+                        .then(Commands.literal("bot").then(Commands.argument("name", StringArgumentType.word()).executes(TwtCommands::bot)))));
+    }
+
+    private static int event(CommandContext<CommandSourceStack> ctx) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        TheyWillTalk mod = mod(ctx);
+        if (mod == null || mod.events() == null) {
+            return 0;
+        }
+        Entity v = EntityArgument.getEntity(ctx, "villager");
+        if (!mod.villagers().canTalk(v)) {
+            ctx.getSource().sendFailure(Component.literal("That entity can't talk."));
+            return 0;
+        }
+        String result = mod.events().trigger(v, EntityArgument.getPlayer(ctx, "player"), StringArgumentType.getString(ctx, "what"));
+        ctx.getSource().sendSuccess(() -> Component.literal(result), true);
+        return 1;
+    }
+
+    private static int errands(CommandContext<CommandSourceStack> ctx) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        TheyWillTalk mod = mod(ctx);
+        if (mod == null || mod.events() == null) {
+            return 0;
+        }
+        mod.events().list(ctx.getSource().getPlayerOrException());
+        return 1;
+    }
+
+    private static int errand(CommandContext<CommandSourceStack> ctx, String action) throws com.mojang.brigadier.exceptions.CommandSyntaxException {
+        TheyWillTalk mod = mod(ctx);
+        if (mod == null || mod.events() == null) {
+            return 0;
+        }
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
+        long id = LongArgumentType.getLong(ctx, "id");
+        boolean done = switch (action) {
+            case "accept" -> mod.events().accept(player, id);
+            case "decline" -> mod.events().decline(player, id);
+            default -> mod.events().abandon(player, id);
+        };
+        return done ? 1 : 0;
+    }
+
+    /**
+     * Development aid: a server-side stand-in player (no client) at the command's position, for trying villager events
+     * from the console. What it's told goes to the log. Only with -Dtheywilltalk.devCommands=true.
+     */
+    private static int bot(CommandContext<CommandSourceStack> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        var source = ctx.getSource();
+        var server = source.getServer();
+        if (server.getPlayerList().getPlayerByName(name) != null) {
+            source.sendFailure(Component.literal(name + " is already online."));
+            return 0;
+        }
+        var profile = new com.mojang.authlib.GameProfile(net.minecraft.core.UUIDUtil.createOfflinePlayerUUID(name), name);
+        var cookie = net.minecraft.server.network.CommonListenerCookie.createInitial(profile, false);
+        ServerPlayer bot = new ServerPlayer(server, source.getLevel(), profile, cookie.clientInformation()) {
+            @Override
+            public void sendSystemMessage(Component message, boolean overlay) {
+                TheyWillTalk.LOGGER.info("[{} {}] {}", name, overlay ? "action bar" : "chat", message.getString());
+            }
+        };
+        var connection = new net.minecraft.network.Connection(net.minecraft.network.protocol.PacketFlow.SERVERBOUND);
+        new io.netty.channel.embedded.EmbeddedChannel(connection);
+        try {
+            server.getPlayerList().placeNewPlayer(connection, bot, cookie);
+        } catch (RuntimeException e) {
+            // Mods greeting a new player with client-only packets (MCA's welcome screen) fail on the fake connection.
+            TheyWillTalk.LOGGER.info("Bot {} joined with a hiccup: {}", name, e.getMessage());
+        }
+        var pos = source.getPosition();
+        bot.teleportTo(source.getLevel(), pos.x, pos.y, pos.z, 0, 0);
+        source.sendSuccess(() -> Component.literal("Bot " + name + " joined at " + (int) pos.x + " " + (int) pos.y + " " + (int) pos.z), false);
+        return 1;
     }
 
     private static TheyWillTalk mod(CommandContext<CommandSourceStack> ctx) {

@@ -58,8 +58,15 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
 * **Remembering.** After each exchange a structured LLM call rates how the villager's opinion changed and what to
   remember; hitting, trading, killing villagers in front of others all become memories. MCA hearts and moods are
   updated through MCA's own API.
-* **Being lively.** Villagers stop and look at you, nod/shake their heads, show particles, greet players they like,
-  and occasionally chat with each other.
+* **Being lively.** Villagers stop and look at you, nod/shake their heads, show particles, and occasionally chat with
+  each other.
+* **Taking the initiative.** Villagers walk up to players they want to talk to (`events/VillagerEvents`): to greet a
+  friend, give a gift, ask a favour, or collect one that's done. Errands fit the villager: bring them something their
+  job needs (`Needs`: wheat for a farmer, iron for a smith, flowers for a child), deal with some monsters, or take a
+  letter to someone else in the village. The villager asks in their own words; players answer by voice or chat (an LLM
+  call decides yes or no, in any language) or click [Accept]. Progress is checked against the game (inventory, kills,
+  the letter item), finished errands are paid in emeralds, and the villager remembers, likes you more, gives MCA
+  hearts or cheaper trades. Asking a villager "any work for me?" gets you one too.
 * **The map.** The dashboard's map is BlueMap, proxied at `/bluemap/` behind the dashboard login, with every talking
   villager and village as a marker. Villagers appear on BlueMap and in the dashboard with their real faces, drawn on the server from their skins the
   way the game's models draw them (`faces/`: the vanilla villager head with biome and profession layers; MCA's
@@ -110,6 +117,16 @@ straight from `src/`, so UI edits only need a browser reload.
 
 Testing voice without a microphone: `/twt relay <player> <lang> <text> | <english>` pushes a line through Sipher's
 real caption relay, exactly like a transcribed voice line.
+
+Testing without a game client: `/twt dev bot <name>` (dev server only) adds a stand-in player at the command's
+position; what it's told goes to the server log. It doesn't load chunks, so `forceload` the village you test in. Then,
+for example:
+
+```bash
+scripts/rcon.py "execute in minecraft:overworld positioned 620 64 -490 run twt dev bot Tester"
+scripts/rcon.py "twt event <villager uuid> Tester fetch" "twt hear Tester Sure, I'll get them!"
+scripts/rcon.py "give Tester minecraft:wheat 16"          # the villager comes to collect
+```
 
 The dev runs keep their AI runtime in `runtime/` (git-ignored). Install it from http://127.0.0.1:8765/#/models, like a
 server admin would.

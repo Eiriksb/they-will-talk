@@ -97,6 +97,7 @@ final class Api {
             }
             case "models" -> models(ex, method, parts);
             case "settings" -> settings(ex, method);
+            case "errands" -> DashboardServer.sendJson(ex, 200, errands(q));
             case "personas" -> DashboardServer.sendJson(ex, 200, personas());
             case "stream" -> stream(ex);
             default -> DashboardServer.sendJson(ex, 404, DashboardServer.error("unknown endpoint " + path));
@@ -169,6 +170,8 @@ final class Api {
                        (SELECT COUNT(*) FROM messages WHERE role='villager') AS replies,
                        (SELECT COUNT(*) FROM messages WHERE role='villager' AND ts > ?) AS repliesToday,
                        (SELECT COUNT(*) FROM memories) AS memories,
+                       (SELECT COUNT(*) FROM errands WHERE status='active') AS errandsActive,
+                       (SELECT COUNT(*) FROM errands WHERE status='done') AS errandsDone,
                        (SELECT CAST(AVG(latency_ms) AS INTEGER) FROM (SELECT latency_ms FROM messages WHERE role='villager' AND latency_ms > 0 ORDER BY ts DESC LIMIT 50)) AS avgLatencyMs
                 """, dayAgo));
         o.add("byKind", rows("SELECT kind, COUNT(*) AS n FROM villagers WHERE alive=1 GROUP BY kind ORDER BY n DESC"));
@@ -327,6 +330,7 @@ final class Api {
                 LEFT JOIN players p ON p.uuid = m.player_uuid WHERE m.villager_uuid = ? ORDER BY m.created DESC LIMIT 100""", id));
         v.add("familyLinks", rows("SELECT relative_uuid, relation, relative_name, relative_is_player, deceased FROM family WHERE villager_uuid=?", id));
         v.add("events", rows("SELECT ts, type, text FROM events WHERE villager_uuid=? ORDER BY ts DESC LIMIT 30", id));
+        v.add("errands", rows(ERRANDS + " WHERE villager_uuid=? OR target_uuid=? ORDER BY created DESC LIMIT 30", id, id));
         v.addProperty("loaded", onServer(() -> mod().findEntity(id) != null).get(2, TimeUnit.SECONDS));
         VillagerProfile prof = mod().villagers().cached(id);
         if (prof != null) {
@@ -610,7 +614,20 @@ final class Api {
         p.add("memories", rows("""
                 SELECT m.created, m.kind, m.text, v.name AS villager, m.villager_uuid FROM memories m
                 JOIN villagers v ON v.uuid = m.villager_uuid WHERE m.player_uuid=? ORDER BY m.created DESC LIMIT 60""", uuid));
+        p.add("errands", rows(ERRANDS + " WHERE player_uuid=? ORDER BY created DESC LIMIT 40", uuid));
         return p;
+    }
+
+    private static final String ERRANDS = """
+            SELECT id, villager_uuid, villager_name, player_uuid, player_name, kind, item, label, count, progress, target_uuid,
+                   target_name, reward, status, created, updated, deadline, request FROM errands""";
+
+    /** Errands, newest first; {@code ?status=active} for one kind. */
+    private JsonArray errands(Map<String, String> q) throws Exception {
+        String status = q.getOrDefault("status", "");
+        int limit = Math.min(500, Integer.parseInt(q.getOrDefault("limit", "100")));
+        return status.isEmpty() ? rows(ERRANDS + " ORDER BY created DESC LIMIT ?", limit)
+                : rows(ERRANDS + " WHERE status=? ORDER BY created DESC LIMIT ?", status, limit);
     }
 
     private JsonObject searchMessages(Map<String, String> q) throws Exception {

@@ -30,7 +30,7 @@ public final class Database implements AutoCloseable {
         T run(Connection c) throws SQLException;
     }
 
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
 
     private final ExecutorService thread = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "twt-db");
@@ -137,6 +137,17 @@ public final class Database implements AutoCloseable {
                 if (!has) {
                     s.execute("ALTER TABLE villagers ADD COLUMN voice_design TEXT");
                 }
+            }
+            if (version < 3) {
+                // v3: errands villagers give players
+                s.execute("""
+                        CREATE TABLE IF NOT EXISTS errands (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT, villager_uuid TEXT, villager_name TEXT, player_uuid TEXT,
+                          player_name TEXT, kind TEXT, item TEXT, label TEXT, count INTEGER, progress INTEGER DEFAULT 0, target_uuid TEXT,
+                          target_name TEXT, reward INTEGER, status TEXT, created INTEGER, updated INTEGER, deadline INTEGER,
+                          request TEXT)""");
+                s.execute("CREATE INDEX IF NOT EXISTS errands_player ON errands(player_uuid, status)");
+                s.execute("CREATE INDEX IF NOT EXISTS errands_villager ON errands(villager_uuid, status)");
             }
             s.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', '" + SCHEMA_VERSION + "')");
         }

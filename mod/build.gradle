@@ -64,6 +64,7 @@ neoForge {
             gameDirectory = rootProject.file('run/server')
             programArgument '--nogui'
             systemProperty 'theywilltalk.dashboardNoAuth', 'true'
+            systemProperty 'theywilltalk.devCommands', 'true'
             systemProperty 'theywilltalk.webDir', file('src/main/resources/assets/theywilltalk/web').absolutePath
             systemProperty 'theywilltalk.runtimeDir', runtimeDir
             jvmArguments.addAll '-Xmx6G'

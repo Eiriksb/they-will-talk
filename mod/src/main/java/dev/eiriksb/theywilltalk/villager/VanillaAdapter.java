@@ -7,6 +7,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.ai.behavior.EntityTracker;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
+import net.minecraft.world.entity.ai.memory.WalkTarget;
 import net.minecraft.world.entity.npc.AbstractVillager;
 import net.minecraft.world.entity.npc.Villager;
 import net.minecraft.world.entity.npc.VillagerProfession;
@@ -109,6 +110,31 @@ public class VanillaAdapter implements VillagerAdapter {
 
     private static String stack(ItemStack s) {
         return s.getCount() + " " + s.getHoverName().getString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    @Override
+    public boolean walkTo(Entity entity, Entity target) {
+        if (entity instanceof Villager v) {
+            // The brain's own walking behaviour follows WALK_TARGET in every activity; a little faster than a stroll.
+            v.getBrain().setMemory(MemoryModuleType.WALK_TARGET, new WalkTarget(target, 0.65f, 2));
+            v.getBrain().setMemory(MemoryModuleType.LOOK_TARGET, new EntityTracker(target, true));
+            return true;
+        }
+        if (entity instanceof Mob mob) {
+            mob.getNavigation().moveTo(target, 0.55);
+            mob.getLookControl().setLookAt(target, 30f, 30f);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void stopWalking(Entity entity) {
+        if (entity instanceof Villager v) {
+            v.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        } else if (entity instanceof Mob mob) {
+            mob.getNavigation().stop();
+        }
     }
 
     @Override

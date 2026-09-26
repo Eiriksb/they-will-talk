@@ -310,7 +310,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // feed rendering (overview + villager pages)
   // ------------------------------------------------------------------------------------------------------------
-  const FEED_ICON = { heard: '👂', reply: '💬', relationship: '💞', ambient: '🗨', event: '⚔', death: '🕯' };
+  const FEED_ICON = { heard: '👂', reply: '💬', relationship: '💞', ambient: '🗨', event: '⚔', death: '🕯', errand: '📜', gift: '🎁', trade: '💰' };
   function feedItem(ev) {
     const link = (uuid, name) => uuid ? h('a', { href: '#/villager/' + uuid }, name) : name;
     let line;
@@ -415,7 +415,7 @@
     const stat = (label, value, sub) => h('div', { class: 'card stat' }, h('div', { class: 'label' }, label), h('div', { class: 'value num' }, value), h('div', { class: 'sub' }, sub));
     const stats = h('div', { class: 'grid g-4' },
       stat('Villagers', fmt.format(c.villagers || 0), `${fmt.format(c.villages || 0)} villages · ${fmt.format(c.deceased || 0)} deceased`),
-      stat('Replies today', fmt.format(c.repliesToday || 0), `${fmt.format(c.conversations || 0)} conversations all time`),
+      stat('Replies today', fmt.format(c.repliesToday || 0), `${fmt.format(c.conversations || 0)} conversations · ${fmt.format(c.errandsActive || 0)} errands going, ${fmt.format(c.errandsDone || 0)} done`),
       stat('Time to voice', c.avgLatencyMs ? fmt.format(c.avgLatencyMs) + ' ms' : '–', `from hearing to speaking · ${r.tokensPerSecond || '–'} tok/s`),
       stat('GPU memory', gpu ? `${(gpu.memoryUsedMb / 1024).toFixed(1)} GB` : '–', gpu ? `of ${(gpu.memoryTotalMb / 1024).toFixed(1)} GB · ${gpu.name}` : 'no NVIDIA GPU found'));
 
@@ -536,7 +536,8 @@
           v.expressiveVoices ? (v.voice_design || v.generatedVoiceDesign) : '', voiceSeed(v.uuid)) }, icon('play'), 'Hear voice')));
 
     const tabs = [['profile', 'Profile'], ['conversations', 'Conversations'], ['relationships', 'Relationships', (v.relationships || []).length],
-      ['family', 'Family tree', (v.familyLinks || []).length], ['memories', 'Memories', (v.memories || []).length]];
+      ['family', 'Family tree', (v.familyLinks || []).length], ['memories', 'Memories', (v.memories || []).length],
+      ['errands', 'Errands', (v.errands || []).length]];
     const tabBar = h('div', { class: 'tabs', role: 'tablist' }, tabs.map(([k, l, n]) => h('button', { role: 'tab', 'aria-selected': k === tab, class: k === tab ? 'on' : '', onclick: () => location.hash = `#/villager/${uuid}/${k}` }, l, n != null ? h('span', { class: 'count' }, n) : null)));
     const body = h('div');
     main.replaceChildren(h('div', { class: 'stack', style: { gap: 0 } }, hero, tabBar, body));
@@ -545,6 +546,9 @@
       case 'relationships': return villagerRelationships(v, body);
       case 'family': return villagerFamily(uuid, body);
       case 'memories': return villagerMemories(v, body);
+      case 'errands': return body.replaceChildren(h('section', { class: 'card', style: { marginTop: '16px' } },
+        h('header', null, h('h2', null, 'Errands'), h('span', { class: 'muted' }, 'favours ' + v.name.split(' ')[0] + ' asked for, and letters to them')),
+        errandList(v.errands || [], true)));
       default: return villagerProfile(v, body);
     }
   }
@@ -803,7 +807,7 @@
     const events = v.events || [];
     body.append(h('div', { class: 'grid g-2' },
       h('section', { class: 'card' }, h('header', null, h('h2', null, 'What they remember')), h('div', { class: 'body feed' },
-        mem.length ? mem.map(m => h('div', { class: 'item' }, h('div', { class: 'ico' }, m.kind === 'trade' ? '💰' : m.kind === 'event' ? '⚔' : '💭'),
+        mem.length ? mem.map(m => h('div', { class: 'item' }, h('div', { class: 'ico' }, FEED_ICON[m.kind] || '💭'),
           h('div', { class: 'txt' }, h('div', { class: 'line' }, m.text), h('div', { class: 'time' }, `${m.player ? 'about ' + m.player + ' · ' : ''}${ago(m.created)}`)))) : h('div', { class: 'empty' }, 'No memories yet.'))),
       h('section', { class: 'card' }, h('header', null, h('h2', null, 'Life events')), h('div', { class: 'body feed' },
         events.length ? events.map(e => h('div', { class: 'item' }, h('div', { class: 'ico' }, FEED_ICON[e.type] || '•'), h('div', { class: 'txt' }, h('div', { class: 'line' }, e.text), h('div', { class: 'time' }, ago(e.ts))))) : h('div', { class: 'empty' }, 'Nothing notable.')))));
@@ -954,11 +958,35 @@
         h('td', null, affinityBar(p.avgAffinity || 0)), h('td', { class: 'muted' }, ago(p.last_seen)))))))));
   }
 
+  const ERRAND_STATUS = { offered: ['Offered', ''], active: ['In progress', 'warn'], done: ['Done', 'ok'], declined: ['Declined', ''],
+    expired: ['Ran out of time', 'bad'], abandoned: ['Given up', 'bad'], failed: ['Called off', 'bad'] };
+  function errandTask(e) {
+    switch (e.kind) {
+      case 'fetch': return `Bring ${e.count} ${e.label} to ${e.villager_name}`;
+      case 'hunt': return `Kill ${e.count} ${e.label} for ${e.villager_name}`;
+      default: return `Take ${e.villager_name}'s letter to ${e.target_name}`;
+    }
+  }
+  function errandList(list, showPlayer) {
+    if (!list.length) return h('div', { class: 'empty' }, 'No errands yet.');
+    const progress = (e) => e.status === 'done' ? `${e.count}/${e.count}` : e.kind === 'hunt' ? `${e.progress}/${e.count}` : e.kind === 'fetch' ? `–/${e.count}` : '–';
+    return h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null, [showPlayer ? 'Player' : 'Villager', 'Errand', 'Progress', 'Reward', 'Status', 'Updated']
+        .map((l, i) => h('th', { class: i === 2 || i === 3 ? 'num' : '' }, l)))),
+      h('tbody', null, list.map(e => h('tr', null,
+        h('td', null, showPlayer ? h('a', { href: '#/player/' + e.player_uuid }, e.player_name) : h('a', { href: '#/villager/' + e.villager_uuid }, e.villager_name)),
+        h('td', null, errandTask(e), e.request ? h('div', { class: 'sub muted clamp2', title: e.request }, '“' + e.request + '”') : null),
+        h('td', { class: 'num' }, progress(e)),
+        h('td', { class: 'num' }, `${e.reward} emerald${e.reward === 1 ? '' : 's'}`),
+        h('td', null, h('span', { class: 'pill ' + (ERRAND_STATUS[e.status] || ['', ''])[1] }, h('span', { class: 'dot' }), (ERRAND_STATUS[e.status] || [e.status])[0])),
+        h('td', { class: 'muted' }, ago(e.updated)))))));
+  }
+
   async function viewPlayer(uuid) {
     const p = await api('/player/' + uuid);
     setTitle(p.name, [h('a', { href: '#/players' }, 'Players')]);
     const rels = p.relationships || [];
-    main.replaceChildren(h('div', { class: 'grid g-main' },
+    main.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'grid g-main' },
       h('section', { class: 'card' }, h('header', null, h('h2', null, 'How villagers feel about ' + p.name)), h('div', { class: 'table-wrap' }, rels.length ? h('table', null,
         h('thead', null, h('tr', null, ['Villager', 'Village', 'Feeling', 'Affinity', 'Hearts', 'Talks'].map((l, i) => h('th', { class: i >= 4 ? 'num' : '' }, l)))),
         h('tbody', null, rels.map(r => h('tr', { onclick: () => location.hash = '#/villager/' + r.villager_uuid },
@@ -966,8 +994,10 @@
           h('td', null, r.village || '–'), h('td', null, feeling(r.affinity)), h('td', null, affinityBar(r.affinity)),
           h('td', { class: 'num' }, r.hearts == null ? '–' : fmt.format(r.hearts)), h('td', { class: 'num' }, fmt.format(r.talks)))))) : h('div', { class: 'empty' }, 'No relationships yet.'))),
       h('section', { class: 'card' }, h('header', null, h('h2', null, 'What villagers remember')), h('div', { class: 'body feed' },
-        (p.memories || []).length ? p.memories.map(m => h('div', { class: 'item' }, h('div', { class: 'ico' }, m.kind === 'trade' ? '💰' : m.kind === 'event' ? '⚔' : '💭'),
-          h('div', { class: 'txt' }, h('div', { class: 'line' }, h('a', { href: '#/villager/' + m.villager_uuid }, m.villager), ': ', m.text), h('div', { class: 'time' }, ago(m.created))))) : h('div', { class: 'empty' }, 'Nothing yet.')))));
+        (p.memories || []).length ? p.memories.map(m => h('div', { class: 'item' }, h('div', { class: 'ico' }, FEED_ICON[m.kind] || '💭'),
+          h('div', { class: 'txt' }, h('div', { class: 'line' }, h('a', { href: '#/villager/' + m.villager_uuid }, m.villager), ': ', m.text), h('div', { class: 'time' }, ago(m.created))))) : h('div', { class: 'empty' }, 'Nothing yet.')))),
+      h('section', { class: 'card' }, h('header', null, h('h2', null, 'Errands'), h('span', { class: 'muted' }, 'favours villagers asked of ' + p.name)),
+        errandList(p.errands || [], false))));
   }
 
   // ------------------------------------------------------------------------------------------------------------
@@ -1260,7 +1290,7 @@
   // ------------------------------------------------------------------------------------------------------------
   // settings
   // ------------------------------------------------------------------------------------------------------------
-  const SECTION_TITLES = { runtime: 'AI programs', conversation: 'Conversations', villagers: 'Villagers', dashboard: 'Dashboard & map' };
+  const SECTION_TITLES = { runtime: 'AI programs', conversation: 'Conversations', villagers: 'Villagers', events: 'Villager events', dashboard: 'Dashboard & map' };
   const ENGINE_LABELS = { auto: 'Automatic', qwen3: 'Qwen3-TTS (GPU)', kokoro: 'Kokoro (CPU)', supertonic: 'Supertonic (CPU)' };
 
   async function viewSettings() {

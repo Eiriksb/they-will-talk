@@ -47,6 +47,14 @@ public final class TwtConfig {
     public static final ModConfigSpec.IntValue AMBIENT_INTERVAL_SECONDS;
     public static final ModConfigSpec.BooleanValue GREETINGS;
 
+    // events
+    public static final ModConfigSpec.BooleanValue APPROACH_PLAYERS;
+    public static final ModConfigSpec.BooleanValue ERRANDS;
+    public static final ModConfigSpec.BooleanValue GIFTS;
+    public static final ModConfigSpec.IntValue MAX_ERRANDS;
+    public static final ModConfigSpec.IntValue ERRAND_MINUTES;
+    public static final ModConfigSpec.IntValue APPROACH_COOLDOWN_SECONDS;
+
     // dashboard
     public static final ModConfigSpec.BooleanValue DASHBOARD;
     public static final ModConfigSpec.ConfigValue<String> DASHBOARD_BIND;
@@ -141,8 +149,25 @@ public final class TwtConfig {
                 .define("ambientChatter", true);
         AMBIENT_INTERVAL_SECONDS = b.comment("Minimum seconds between ambient chats in the same area.")
                 .defineInRange("ambientIntervalSeconds", 300, 20, 3600);
-        GREETINGS = b.comment("Villagers who know you well greet you when you walk up to them.")
+        GREETINGS = b.comment("Villagers who know you well greet you when they see you.")
                 .define("greetings", true);
+        b.pop();
+
+        b.comment("Villagers taking the initiative: walking up to players, asking for favours, giving gifts.").push("events");
+        APPROACH_PLAYERS = b.comment("Villagers walk up to players they want to talk to (to greet a friend, ask a favour, give a gift,",
+                        "or collect a finished errand). Off: they only call out when you're close.")
+                .define("approachPlayers", true);
+        ERRANDS = b.comment("Villagers ask players for favours: bring them things, deal with monsters, deliver a letter.")
+                .define("errands", true);
+        GIFTS = b.comment("Villagers who are fond of a player now and then give them a small gift.")
+                .define("gifts", true);
+        MAX_ERRANDS = b.comment("How many errands a player can have going at once.")
+                .defineInRange("maxErrands", 3, 1, 10);
+        ERRAND_MINUTES = b.comment("How long (real minutes) a player has to finish an errand before the villager gives up on them.")
+                .defineInRange("errandMinutes", 90, 10, 10080);
+        APPROACH_COOLDOWN_SECONDS = b.comment("At least this long between villagers walking up to the same player (collecting a",
+                        "finished errand doesn't wait).")
+                .defineInRange("approachCooldownSeconds", 150, 20, 3600);
         b.pop();
 
         b.comment("Admin dashboard (web).").push("dashboard");

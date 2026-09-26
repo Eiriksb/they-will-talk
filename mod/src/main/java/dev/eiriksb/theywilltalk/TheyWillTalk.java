@@ -10,6 +10,7 @@ import dev.eiriksb.theywilltalk.conversation.ConversationManager;
 import dev.eiriksb.theywilltalk.conversation.LiveFeed;
 import dev.eiriksb.theywilltalk.data.Database;
 import dev.eiriksb.theywilltalk.data.Store;
+import dev.eiriksb.theywilltalk.events.VillagerEvents;
 import dev.eiriksb.theywilltalk.integration.Integrations;
 import dev.eiriksb.theywilltalk.integration.SipherBridge;
 import dev.eiriksb.theywilltalk.faces.VillagerFaces;
@@ -71,6 +72,7 @@ public final class TheyWillTalk {
     private SpeechRenderer speech;
     private VillagerRegistry villagers;
     private ConversationManager conversations;
+    private VillagerEvents events;
     private DashboardServer dashboard;
     private Integrations integrations;
     private VillagerFaces faces;
@@ -158,6 +160,8 @@ public final class TheyWillTalk {
         villagers.addAdapter(new VanillaAdapter());
         villagers.preload();
         conversations = new ConversationManager(server, villagers, store, llm, speech, TheyWillTalk::voiceOutput, feed, () -> runtime.llmReady());
+        events = new VillagerEvents(server, villagers, store, conversations, llm, feed, () -> runtime.llmReady());
+        conversations.setHooks(events);
 
         if (TwtConfig.AUTO_START.get()) {
             runtime.start();
@@ -182,6 +186,7 @@ public final class TheyWillTalk {
             conversations.shutdown();
             conversations = null;
         }
+        events = null;
         if (llm != null) {
             llm.shutdown();
         }
@@ -203,6 +208,9 @@ public final class TheyWillTalk {
             return;
         }
         conversations.tick();
+        if (events != null) {
+            events.tick();
+        }
         ticks++;
         if (ticks % 20 == 0 && tts != null && runtime.voiceReady() && tts.voices().isEmpty()) {
             Thread.ofVirtual().start(tts::refreshVoices);
@@ -266,9 +274,15 @@ public final class TheyWillTalk {
         Entity dead = event.getEntity();
         var profile = villagers.cached(dead.getUUID());
         if (profile == null) {
+            if (events != null && event.getSource().getEntity() instanceof ServerPlayer killer) {
+                events.killed(killer, dead);
+            }
             return;
         }
         store.markDead(dead.getUUID());
+        if (events != null) {
+            events.villagerDied(dead.getUUID());
+        }
         String cause = event.getSource().getEntity() instanceof ServerPlayer p ? "was killed by " + p.getGameProfile().getName()
                 : "died (" + event.getSource().getMsgId() + ")";
         store.event("death", dead.getUUID(), event.getSource().getEntity() instanceof ServerPlayer p ? p.getUUID() : null,
@@ -345,6 +359,11 @@ public final class TheyWillTalk {
 
     public ConversationManager conversationManager() {
         return conversations;
+    }
+
+    /** Errands, gifts and villagers walking up to players. */
+    public VillagerEvents events() {
+        return events;
     }
 
     public LiveFeed feed() {

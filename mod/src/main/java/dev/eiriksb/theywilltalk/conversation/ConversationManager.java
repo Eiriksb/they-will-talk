@@ -43,6 +43,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
@@ -54,7 +55,31 @@ import java.util.regex.Pattern;
  * threads, and results hop back with {@code server.execute}.
  */
 public final class ConversationManager {
-    public enum Channel { VOICE, TEXT, COMMAND, DASHBOARD, GREETING, AMBIENT }
+    public enum Channel {
+        VOICE, TEXT, COMMAND, DASHBOARD, GREETING, AMBIENT,
+        /** the villager speaks first: walking up to someone, asking a favour, giving a gift */
+        EVENT;
+
+        /** The villager starts the exchange; nothing the player said goes in. */
+        boolean scripted() {
+            return this == GREETING || this == EVENT;
+        }
+    }
+
+    /** Villager events (errands, walking up to players) plugged into conversations. All calls on the server thread. */
+    public interface Hooks {
+        /**
+         * As a turn with a player starts: what's going on between them, for the prompt. {@code playerText} is null when
+         * the villager speaks first. May act on what the player said (hand over a finished errand, ask for work).
+         */
+        List<String> favours(Entity villager, ServerPlayer player, String playerText);
+
+        /** After the villager answered something the player said. */
+        void answered(Entity villager, ServerPlayer player, String reply);
+
+        /** Villagers busy with an event (walking up to someone) stay out of ambient chatter. */
+        boolean busy(UUID villager);
+    }
 
     private static final String END = "\u0000END";
     private static final Pattern WORD = Pattern.compile("[\\p{L}']+");
@@ -75,7 +100,6 @@ public final class ConversationManager {
     private final Map<UUID, Speaker> speakers = new ConcurrentHashMap<>();
     private final Map<String, Integer> affinity = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> moodLevels = new ConcurrentHashMap<>();
-    private final Map<String, Long> greeted = new ConcurrentHashMap<>();
     private final Map<Long, Long> ambientByArea = new ConcurrentHashMap<>();
     /** What villagers said recently, to recognise their own voice coming back through a player's microphone. */
     private final java.util.concurrent.ConcurrentLinkedDeque<SpokenLine> recentLines = new java.util.concurrent.ConcurrentLinkedDeque<>();
@@ -86,6 +110,7 @@ public final class ConversationManager {
         return t;
     });
     private int tick;
+    private volatile Hooks hooks;
 
     // stats for the dashboard
     public volatile long lastLatencyMs;
@@ -109,6 +134,10 @@ public final class ConversationManager {
         } catch (Exception e) {
             TheyWillTalk.LOGGER.warn("Could not load relationships: {}", e.toString());
         }
+    }
+
+    public void setHooks(Hooks hooks) {
+        this.hooks = hooks;
     }
 
     public void shutdown() {
@@ -153,7 +182,7 @@ public final class ConversationManager {
 
     /** Talk to a specific villager (commands, dashboard). Server thread. */
     public void talk(Entity villager, ServerPlayer player, String text, Channel channel, String originalText, String lang) {
-        if (player != null && channel != Channel.GREETING && channel != Channel.DASHBOARD && overLimit(player, villager)) {
+        if (player != null && !channel.scripted() && channel != Channel.DASHBOARD && overLimit(player, villager)) {
             player.displayClientMessage(Component.literal(name(villager) + " needs a moment to catch their breath...")
                     .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC), true);
             return;
@@ -163,7 +192,7 @@ public final class ConversationManager {
         Turn current = sp.current;
         UUID pid = player == null ? null : player.getUUID();
         if (current != null) {
-            if (pid != null && pid.equals(current.playerId) && channel != Channel.GREETING) {
+            if (pid != null && pid.equals(current.playerId) && !channel.scripted()) {
                 current.cancel(); // barge-in: the player talks over the villager
             } else {
                 synchronized (sp.queue) {
@@ -178,7 +207,24 @@ public final class ConversationManager {
                 return;
             }
         }
-        startTurn(sp, villager, player, text, channel, originalText, lang);
+        startTurn(sp, villager, player, text, channel, originalText, lang, null);
+    }
+
+    /**
+     * The villager speaks to the player on their own initiative. {@code instruction} tells the model what's going on,
+     * like "(You walked over to Eirik to ask a favour...)". Server thread.
+     *
+     * @param onSpoken gets what the villager said, on the server thread (not when the turn fails or is interrupted)
+     * @return false when the villager is busy talking
+     */
+    public boolean event(Entity villager, ServerPlayer player, String instruction, Consumer<String> onSpoken) {
+        Speaker sp = speakers.computeIfAbsent(villager.getUUID(), u -> new Speaker(villager));
+        sp.entity = new WeakReference<>(villager);
+        if (sp.current != null) {
+            return false;
+        }
+        startTurn(sp, villager, player, instruction, Channel.EVENT, null, "en", onSpoken);
+        return true;
     }
 
     private Entity findTarget(ServerPlayer player, String text) {
@@ -341,7 +387,8 @@ public final class ConversationManager {
     // A conversational turn
     // =========================================================================================================
 
-    private void startTurn(Speaker sp, Entity villager, ServerPlayer player, String text, Channel channel, String originalText, String lang) {
+    private void startTurn(Speaker sp, Entity villager, ServerPlayer player, String text, Channel channel, String originalText, String lang,
+                           Consumer<String> onSpoken) {
         VillagerAdapter adapter = villagers.adapterFor(villager);
         if (adapter == null) {
             return;
@@ -373,11 +420,17 @@ public final class ConversationManager {
 
         Turn turn = new Turn(villager, player, pid, playerName, text, channel, originalText, lang, facts, profile, adapter);
         turn.replyLang = replyLanguage(channel, lang, pid);
+        turn.onSpoken = onSpoken;
+        Hooks h = hooks;
+        if (h != null && player != null && channel != Channel.AMBIENT) {
+            boolean heard = channel == Channel.VOICE || channel == Channel.TEXT || channel == Channel.COMMAND;
+            turn.favours = h.favours(villager, player, heard ? text : null);
+        }
         sp.current = turn;
         if (player != null) {
             sp.attentionTarget = new WeakReference<>(player);
             sp.attentionUntil = System.currentTimeMillis() + 20_000;
-            if (channel != Channel.GREETING) {
+            if (!channel.scripted()) {
                 player.displayClientMessage(Component.literal(profile.firstName() + " is listening...")
                         .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC), true);
                 Gestures.listening(villager, facts.kind);
@@ -403,7 +456,7 @@ public final class ConversationManager {
         long t0 = System.currentTimeMillis();
         VillagerProfile profile = turn.profile;
         UUID vid = profile.uuid();
-        boolean isGreeting = turn.channel == Channel.GREETING;
+        boolean scripted = turn.channel.scripted();
         try {
             Store.Relationship rel = store.relationship(vid, turn.playerId).get(3, TimeUnit.SECONDS);
             List<Store.Memory> memories = store.memories(vid, turn.playerId, 6).get(3, TimeUnit.SECONDS);
@@ -414,7 +467,7 @@ public final class ConversationManager {
                 session.conversationId = store.startConversation(vid, turn.playerId, turn.channel.name().toLowerCase(Locale.ROOT))
                         .get(3, TimeUnit.SECONDS);
             }
-            if (!isGreeting) {
+            if (!scripted) {
                 store.addMessage(session.conversationId, vid, turn.playerId, "player", turn.playerName, turn.text, turn.originalText,
                         turn.lang, null, 0);
             }
@@ -422,7 +475,7 @@ public final class ConversationManager {
             boolean ownLanguage = !turn.replyLang.equals(Languages.ENGLISH) && turn.originalText != null && !turn.originalText.isBlank();
             List<LlmClient.Message> messages = PromptBuilder.conversation(profile, turn.facts, turn.playerName, rel, memories, gossip,
                     world, history, ownLanguage ? turn.originalText : turn.text, TwtConfig.MAX_REPLY_WORDS.get(),
-                    Languages.name(turn.replyLang));
+                    Languages.name(turn.replyLang), turn.favours);
 
             VoiceOutput out = voice.get();
             VoiceOutput.SpeechStream stream = out.available() ? out.open(turn.villager.get(), TwtConfig.VOICE_DISTANCE.get().floatValue())
@@ -437,7 +490,7 @@ public final class ConversationManager {
             Thread.ofVirtual().start(() -> speech.prepare(profile, turn.facts, "neutral"));
             boolean[] moodPrepared = {false};
 
-            CompletableFuture<LlmClient.Result> future = llm.chat(isGreeting ? LlmClient.Priority.GREETING : LlmClient.Priority.CONVERSATION,
+            CompletableFuture<LlmClient.Result> future = llm.chat(scripted ? LlmClient.Priority.GREETING : LlmClient.Priority.CONVERSATION,
                     messages, TwtConfig.TEMPERATURE.get(), TwtConfig.MAX_REPLY_WORDS.get() * 2 + 24, null, delta -> {
                         if (!turn.cancelled) {
                             ss.accept(delta);
@@ -470,7 +523,7 @@ public final class ConversationManager {
             turnsTotal++;
             store.addMessage(session.conversationId, vid, turn.playerId, "villager", profile.name(), reply, null, turn.replyLang, emotion,
                     turn.firstAudioMs);
-            if (!isGreeting) {
+            if (!scripted) {
                 synchronized (session.history) {
                     session.history.add(new PromptBuilder.Turn("player", turn.text, null));
                     session.history.add(new PromptBuilder.Turn("villager", reply, emotion));
@@ -484,6 +537,20 @@ public final class ConversationManager {
             store.villagerSpoke(vid);
             if (turn.player != null) {
                 store.recordTalk(vid, turn.playerId, turn.facts.hearts, turn.facts.reputation, turn.facts.relationToPlayer);
+                // After the villager has finished saying it (an offer's chat card shouldn't cut them off).
+                long stillSpeakingMs = turn.stream == null ? 0 : turn.stream.queuedMs();
+                timer.schedule(() -> server.execute(() -> {
+                    Entity v = turn.villager.get();
+                    Hooks h = hooks;
+                    if (v == null) {
+                        return;
+                    }
+                    if (turn.onSpoken != null) {
+                        turn.onSpoken.accept(reply);
+                    } else if (!scripted && h != null) {
+                        h.answered(v, turn.player, reply);
+                    }
+                }), stillSpeakingMs, TimeUnit.MILLISECONDS);
             }
 
             JsonObject ev = new JsonObject();
@@ -496,7 +563,7 @@ public final class ConversationManager {
             ev.addProperty("tokensPerSecond", Math.round(llm.lastTokensPerSecond));
             feed.publish("reply", ev);
 
-            if (turn.player != null && !isGreeting) {
+            if (turn.player != null && !scripted) {
                 reflect(turn, List.of(new PromptBuilder.Turn("player", turn.text, null), new PromptBuilder.Turn("villager", reply, emotion)));
             }
         } catch (Exception e) {
@@ -610,7 +677,7 @@ public final class ConversationManager {
         }
         Entity v = sp.entity.get();
         if (next != null && v != null && v.isAlive()) {
-            startTurn(sp, v, next.player, next.text, next.channel, next.originalText, next.lang);
+            startTurn(sp, v, next.player, next.text, next.channel, next.originalText, next.lang, null);
         }
     }
 
@@ -706,7 +773,7 @@ public final class ConversationManager {
 
     /**
      * The language a villager answers in: the player's spoken language (from Sipher) when that's on and the Qwen3-TTS
-     * voices can speak it; otherwise English. Greetings use the language the player last spoke in.
+     * voices can speak it; otherwise English. When the villager speaks first, the language the player last spoke in.
      */
     private String replyLanguage(Channel channel, String lang, UUID player) {
         String spoken = Languages.base(lang);
@@ -717,7 +784,7 @@ public final class ConversationManager {
             return Languages.ENGLISH;
         }
         String candidate = channel == Channel.VOICE ? spoken
-                : channel == Channel.GREETING ? playerLanguages.getOrDefault(player, Languages.ENGLISH) : Languages.ENGLISH;
+                : channel.scripted() ? playerLanguages.getOrDefault(player, Languages.ENGLISH) : Languages.ENGLISH;
         return Languages.speakable(candidate) ? Languages.base(candidate) : Languages.ENGLISH;
     }
 
@@ -757,7 +824,7 @@ public final class ConversationManager {
     }
 
     // =========================================================================================================
-    // Per-tick upkeep: attention, greetings, ambient chatter
+    // Per-tick upkeep: attention, ambient chatter
     // =========================================================================================================
 
     public void tick() {
@@ -782,34 +849,10 @@ public final class ConversationManager {
         }
         sessions.entrySet().removeIf(e -> now - e.getValue().lastActivity > 10 * 60_000L);
         speakers.entrySet().removeIf(e -> e.getValue().entity.get() == null && e.getValue().current == null);
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            if (TwtConfig.GREETINGS.get()) {
-                maybeGreet(player, now);
-            }
-            if (TwtConfig.AMBIENT_CHATTER.get()) {
+        if (TwtConfig.AMBIENT_CHATTER.get()) {
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
                 maybeAmbient(player, now);
             }
-        }
-    }
-
-    private void maybeGreet(ServerPlayer player, long now) {
-        Session s = sessions.get(player.getUUID());
-        if (s != null && now - s.lastActivity < 60_000) {
-            return;
-        }
-        List<Entity> close = player.serverLevel().getEntities(player, player.getBoundingBox().inflate(4), villagers::canTalk);
-        for (Entity v : close) {
-            String key = v.getUUID() + "|" + player.getUUID();
-            int aff = affinity.getOrDefault(key, 0);
-            Long last = greeted.get(key);
-            Speaker sp = speakers.get(v.getUUID());
-            if (aff < 20 || (last != null && now - last < 20 * 60_000L) || (sp != null && sp.current != null)
-                    || !player.hasLineOfSight(v)) {
-                continue;
-            }
-            greeted.put(key, now);
-            talk(v, player, PromptBuilder.greetingRequest(player.getGameProfile().getName()), Channel.GREETING, null, "en");
-            return;
         }
     }
 
@@ -845,7 +888,8 @@ public final class ConversationManager {
             return false;
         }
         Speaker sp = speakers.get(e.getUUID());
-        return sp == null || sp.current == null;
+        Hooks h = hooks;
+        return (sp == null || sp.current == null) && (h == null || !h.busy(e.getUUID()));
     }
 
     private void ambient(Entity a, Entity b, ServerPlayer nearbyPlayer) {
@@ -935,19 +979,45 @@ public final class ConversationManager {
         }
         VillagerFacts facts = villagers.facts(villager, player);
         VillagerProfile p = villagers.profile(villager, facts);
-        store.addMemory(p.uuid(), player.getUUID(), kind, text);
+        remember(p.uuid(), p.name(), player.getUUID(), player.getGameProfile().getName(), kind, text, affinityDelta);
+    }
+
+    /**
+     * The same for a villager who may not be loaded right now.
+     *
+     * @param kind "event", "trade", "errand", "gift": the memory's kind and the live feed's event type
+     */
+    public void remember(UUID villager, String villagerName, UUID player, String playerName, String kind, String text, int affinityDelta) {
+        store.addMemory(villager, player, kind, text);
         if (affinityDelta != 0) {
-            store.adjustAffinity(p.uuid(), player.getUUID(), affinityDelta);
-            affinity.merge(p.uuid() + "|" + player.getUUID(), affinityDelta, (a, b) -> Math.max(-100, Math.min(100, a + b)));
+            store.adjustAffinity(villager, player, affinityDelta);
+            affinity.merge(villager + "|" + player, affinityDelta, (a, b) -> Math.max(-100, Math.min(100, a + b)));
         }
-        store.event(kind, p.uuid(), player.getUUID(), p.name() + ": " + text);
+        store.event(kind, villager, player, villagerName + ": " + text);
         JsonObject ev = new JsonObject();
-        ev.addProperty("villager", p.uuid().toString());
-        ev.addProperty("villagerName", p.name());
-        ev.addProperty("player", player.getGameProfile().getName());
+        ev.addProperty("villager", villager.toString());
+        ev.addProperty("villagerName", villagerName);
+        ev.addProperty("player", playerName);
         ev.addProperty("memory", text);
         ev.addProperty("delta", affinityDelta);
-        feed.publish("event", ev);
+        feed.publish(kind, ev);
+    }
+
+    /** How a villager feels about a player, -100 to 100. */
+    public int affinity(UUID villager, UUID player) {
+        return affinity.getOrDefault(villager + "|" + player, 0);
+    }
+
+    /** When the player last talked with a villager (0: not in the last few minutes). */
+    public long lastTalk(UUID player) {
+        Session s = sessions.get(player);
+        return s == null ? 0 : s.lastActivity;
+    }
+
+    /** Whether the villager is talking (or about to) right now. */
+    public boolean talking(UUID villager) {
+        Speaker sp = speakers.get(villager);
+        return sp != null && sp.current != null;
     }
 
     public int activeConversations() {
@@ -1006,6 +1076,9 @@ public final class ConversationManager {
         volatile long firstAudioMs;
         /** Language the villager answers in (the player's, when the voices speak it). */
         volatile String replyLang = Languages.ENGLISH;
+        /** What's going on between the villager and the player (errands), for the prompt. */
+        volatile List<String> favours = List.of();
+        volatile Consumer<String> onSpoken;
         final BlockingQueue<String> sentences = new LinkedBlockingQueue<>();
 
         Turn(Entity villager, ServerPlayer player, UUID playerId, String playerName, String text, Channel channel, String originalText,

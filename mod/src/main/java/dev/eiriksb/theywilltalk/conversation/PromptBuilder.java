@@ -142,7 +142,8 @@ public final class PromptBuilder {
 
     public static List<Message> conversation(VillagerProfile p, VillagerFacts f, String playerName, Store.Relationship rel,
                                              List<Store.Memory> memories, List<Store.Memory> gossip, List<String> world,
-                                             List<Turn> history, String playerText, int maxWords, String language) {
+                                             List<Turn> history, String playerText, int maxWords, String language,
+                                             List<String> favours) {
         f.talkingAboutTrade = f.kind == VillagerKind.WANDERING_TRADER || aboutTrade(playerText, history);
         StringBuilder sys = new StringBuilder(persona(p, f));
         sys.append("\n# Right now\n");
@@ -164,6 +165,10 @@ public final class PromptBuilder {
             for (Store.Memory m : gossip) {
                 sys.append("- ").append(m.villagerName()).append(" says: ").append(m.text()).append('\n');
             }
+        }
+        if (!favours.isEmpty()) {
+            sys.append("Favours between you:\n");
+            favours.forEach(l -> sys.append("- ").append(l).append('\n'));
         }
         sys.append("""
 
@@ -320,7 +325,62 @@ public final class PromptBuilder {
         return List.of(Message.system(sys.toString()), Message.user("Write the conversation now."));
     }
 
+    // ---- villagers taking the initiative ------------------------------------------------------------------------
+
     public static String greetingRequest(String playerName) {
-        return "(" + playerName + " just walked up to you. Greet them in one short sentence.)";
+        return "(You spotted " + playerName + ", whom you like, and walked over to them. Greet them in one short sentence.)";
+    }
+
+    /** @param objective "bring you 12 wheat" */
+    public static String errandRequest(String playerName, String objective, String reward) {
+        return "(You walked over to " + playerName + " because you need a favour: " + objective + ". You'll give them " + reward
+                + " for it. Ask them in one or two short sentences, in character, with a reason that fits your life, and say exactly what you need.)";
+    }
+
+    /** @param gift "3 bread" */
+    public static String giftRequest(String playerName, String gift) {
+        return "(You walked over to " + playerName + ", whom you're very fond of, and just handed them a small gift: " + gift
+                + ". Say something short and warm as you give it.)";
+    }
+
+    /** @param done "brought you the 12 wheat you asked for" */
+    public static String thanksRequest(String playerName, String done, String reward) {
+        return "(" + playerName + " just " + done + ", and you gave them " + reward + " as promised. Thank them in one or two sentences, in character.)";
+    }
+
+    public static String letterRequest(String playerName, String from, String reward) {
+        return "(" + playerName + " just handed you a letter from " + from + ", and you gave them " + reward
+                + " for their trouble. React to the letter in one or two sentences; you can guess what " + from + " wrote.)";
+    }
+
+    // ---- did the player agree to do the favour? ----------------------------------------------------------------
+
+    public static JsonObject answerSchema() {
+        JsonObject answer = new JsonObject();
+        answer.addProperty("type", "string");
+        JsonArray values = new JsonArray();
+        values.add("yes");
+        values.add("no");
+        values.add("unclear");
+        answer.add("enum", values);
+        JsonObject props = new JsonObject();
+        props.add("answer", answer);
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "object");
+        schema.add("properties", props);
+        JsonArray req = new JsonArray();
+        req.add("answer");
+        schema.add("required", req);
+        return schema;
+    }
+
+    /** @param request what the villager said when asking; {@code task} is the plain version */
+    public static List<Message> answer(String villagerName, String playerName, String request, String task, String playerText) {
+        String sys = """
+                In a Minecraft game, the villager %s asked the player %s for a favour: "%s" (%s).
+                This is what %s answered. It may be in any language and comes from speech recognition, so it can contain small mistakes.
+                Did they agree to do it? Output JSON: answer is "yes" if they agreed (even reluctantly or with a joke), "no" if they refused or put it off, "unclear" if they didn't answer the request.
+                """.formatted(villagerName, playerName, request.isBlank() ? task : request, task, playerName);
+        return List.of(Message.system(sys), Message.user(playerText));
     }
 }

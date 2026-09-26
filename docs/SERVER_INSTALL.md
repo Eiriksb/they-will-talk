@@ -69,6 +69,11 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
 * Use **push-to-talk** or headphones: with open speakers and voice activation, the microphone can pick up villager
   voices (They Will Talk filters these echoes, but push-to-talk is nicer).
 * No mic? Type in chat while looking at a villager, or use `/twt talk <message>`.
+* Villagers come to you: friends walk up to say hello or bring a small gift, and villagers ask for favours: bring them
+  something, deal with some monsters, or take a letter to a neighbour. Say yes or no (or click [Accept]), and
+  `/twt errands` lists what you've promised, how far along you are and where to find the villager. Bring the things
+  or the letter to them and they pay in emeralds, and remember it. Ask a villager "do you have any work for me?" for an
+  errand of your own.
 
 ## Admin dashboard
 
@@ -90,6 +95,9 @@ instructions. The **Settings** page changes the mod's settings (below) without e
 | Command | Who | What |
 |---|---|---|
 | `/twt talk <message>` | everyone | talk to the villager you're looking at, by typing |
+| `/twt errands` | everyone | your errands, with progress, directions and buttons |
+| `/twt errand accept\|decline\|abandon <id>` | everyone | what the chat buttons do |
+| `/twt event <villager> <player> <what>` | op | make it happen now: `greet`, `gift`, `errand` (or `fetch`, `hunt`, `deliver`) |
 | `/twt status` | op | AI status, GPU, latency |
 | `/twt dashboard` | op | dashboard login link |
 | `/twt info <villager>` | op | who is this villager? |
@@ -111,6 +119,8 @@ dashboard's own address, port and BlueMap URL, which are only in the file. The m
 * `listenRadius`, `voiceDistance`, `requireLookOrName`, `activeConversationSeconds` - who hears what.
 * `maxReplyWords`, `maxRepliesPerMinute` - how chatty villagers are.
 * `ambientChatter`, `ambientIntervalSeconds`, `greetings` - villagers talking on their own.
+* `approachPlayers`, `errands`, `gifts`, `maxErrands`, `errandMinutes`, `approachCooldownSeconds` - villagers walking up
+  to players, asking favours and giving gifts.
 * `vanillaVillagers`, `wanderingTraders`, `mcaVillagers`, `minecoloniesCitizens` - who can talk.
 * `processNice` (Linux) - how politely the AI shares the CPU with the Minecraft server.
 
