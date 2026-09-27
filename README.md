@@ -6,6 +6,11 @@ traders, **MCA Reborn** villagers and **MineColonies** citizens. Players talk wi
 **Simple Voice Chat** + **[Sipher](https://github.com/Eiriksb/Sipher)**, or by typing. An admin **dashboard** shows
 every villager, their conversations, relationships, family trees and a map (with **BlueMap**).
 
+> **Status:** beta (0.2). Conversations, voices, group conversations, errands and the dashboard work end to end on a
+> Linux server with an NVIDIA GPU; playtesting on other setups is ongoing. What is left before 1.0 is tracked in the
+> [1.0 milestone](https://github.com/Eiriksb/they-will-talk/milestone/1), ideas for later in
+> [After 1.0](https://github.com/Eiriksb/they-will-talk/milestone/2).
+
 Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
 
 ```
