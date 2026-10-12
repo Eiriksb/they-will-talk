@@ -54,11 +54,15 @@ public final class PromptBuilder {
         }
         String job = f.job == null || f.job.isBlank() ? "" : f.job;
         sb.append("You are ").append(p.name()).append(", ");
-        switch (f.kind == null ? VillagerKind.VANILLA : f.kind) {
-            case WANDERING_TRADER -> sb.append("a mysterious wandering trader who travels the world with two llamas, selling exotic goods");
-            case MINECOLONIES -> sb.append("a ").append(join(age, gender)).append(job.isEmpty() ? "" : " working as the colony's " + job)
+        if (f.role != null && !f.role.isBlank()) {
+            sb.append("a ").append(join(age, gender)).append(", ").append(f.role.trim());
+        } else if (f.kind == VillagerKind.WANDERING_TRADER) {
+            sb.append("a mysterious wandering trader who travels the world with two llamas, selling exotic goods");
+        } else if (f.kind == VillagerKind.MINECOLONIES) {
+            sb.append("a ").append(join(age, gender)).append(job.isEmpty() ? "" : " working as the colony's " + job)
                     .append(", a citizen of a colony founded by players");
-            default -> sb.append("a ").append(join(age, gender)).append(job.isEmpty() ? " villager" : " (" + job + ")");
+        } else {
+            sb.append("a ").append(join(age, gender)).append(job.isEmpty() ? " villager" : " (" + job + ")");
         }
         if (f.village != null && f.village.name() != null) {
             sb.append(f.kind == VillagerKind.MINECOLONIES ? " in the colony of " : " living in the village of ").append(f.village.name());
@@ -168,6 +172,9 @@ public final class PromptBuilder {
         sys.append("\n# Right now\n");
         for (String w : world) {
             sys.append("- ").append(w).append('\n');
+        }
+        for (String c : f.context) {
+            sys.append("- ").append(c).append('\n');
         }
         if (f.sleeping) {
             sys.append("- You were ASLEEP in your bed and ").append(playerName).append(" just woke you up. You're groggy.\n");

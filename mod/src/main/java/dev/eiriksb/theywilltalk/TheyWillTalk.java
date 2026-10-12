@@ -5,6 +5,7 @@ import dev.eiriksb.theywilltalk.ai.QwenTtsClient;
 import dev.eiriksb.theywilltalk.ai.TtsClient;
 import dev.eiriksb.theywilltalk.audio.SpeechRenderer;
 import dev.eiriksb.theywilltalk.audio.VoiceBank;
+import dev.eiriksb.theywilltalk.api.TwtReadyEvent;
 import dev.eiriksb.theywilltalk.audio.VoiceOutput;
 import dev.eiriksb.theywilltalk.conversation.ConversationManager;
 import dev.eiriksb.theywilltalk.conversation.LiveFeed;
@@ -158,6 +159,7 @@ public final class TheyWillTalk {
         integrations = new Integrations();
         integrations.registerAdapters(villagers);
         villagers.addAdapter(new VanillaAdapter());
+        TwtApi.INSTANCE.installAdapters(villagers);
         villagers.preload();
         conversations = new ConversationManager(server, villagers, store, llm, speech, TheyWillTalk::voiceOutput, feed, () -> runtime.llmReady());
         events = new VillagerEvents(server, villagers, store, conversations, llm, feed, () -> runtime.llmReady());
@@ -172,6 +174,7 @@ public final class TheyWillTalk {
             dashboard.start();
         }
         integrations.onServerStarted(this);
+        NeoForge.EVENT_BUS.post(new TwtReadyEvent(TwtApi.INSTANCE, server));
     }
 
     private void onServerStopping(ServerStoppingEvent event) {

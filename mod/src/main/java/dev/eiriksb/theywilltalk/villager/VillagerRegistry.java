@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * deterministically from its UUID, then stored so admin edits stick) and casts a voice that fits its personality.
  */
 public final class VillagerRegistry {
-    private final List<VillagerAdapter> adapters = new ArrayList<>();
+    private final List<VillagerAdapter> adapters = new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Map<UUID, VillagerProfile> profiles = new ConcurrentHashMap<>();
     private final Store store;
     private final TtsClient tts;
@@ -52,25 +52,21 @@ public final class VillagerRegistry {
         adapters.add(adapter);
     }
 
+    /** Other mods' adapters go before the built-in ones: their entities may extend vanilla villagers. */
+    public void addAdapterFirst(VillagerAdapter adapter) {
+        adapters.addFirst(adapter);
+    }
+
     public VillagerAdapter adapterFor(Entity e) {
         if (e == null || !e.isAlive()) {
             return null;
         }
         for (VillagerAdapter a : adapters) {
             if (a.matches(e)) {
-                return enabled(a.kind(), e) ? a : null;
+                return a.kind().enabled() ? a : null;
             }
         }
         return null;
-    }
-
-    private static boolean enabled(VillagerKind kind, Entity e) {
-        return switch (kind) {
-            case VANILLA -> TwtConfig.VANILLA_VILLAGERS.get();
-            case WANDERING_TRADER -> TwtConfig.WANDERING_TRADERS.get();
-            case MCA -> TwtConfig.MCA_VILLAGERS.get();
-            case MINECOLONIES -> TwtConfig.MINECOLONIES_CITIZENS.get();
-        };
     }
 
     public boolean canTalk(Entity e) {

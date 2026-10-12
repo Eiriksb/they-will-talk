@@ -142,6 +142,20 @@ scripts/rcon.py "give Tester minecraft:wheat 16"          # the villager comes t
 The dev runs keep their AI runtime in `runtime/` (git-ignored). Install it from http://127.0.0.1:8765/#/models, like a
 server admin would.
 
+### Building on They Will Talk
+
+Other mods can make their own entities talk and add to conversations through `dev.eiriksb.theywilltalk.api`
+(start at `TheyWillTalkApi.get()`):
+
+* `registerKind` / `registerAdapter`: a new kind of villager and the adapter that reads it (`VillagerAdapter`,
+  filling `VillagerFacts`; set `facts.role` to describe who they are).
+* `addPromptContributor`: lines about what's going on, added to every turn's prompt.
+* `addConversationHook`: runs before each reply to a player (add context, or take the turn over) and after it.
+* `TwtReadyEvent` on the game bus once a world is loaded and TWT is running.
+
+Only that package and `VillagerAdapter`, `VillagerFacts`, `VillagerKind` and `VillagerProfile` are API; the rest may
+change. [Stad](https://github.com/Eiriksb/Stad) uses it.
+
 ## Packaging
 
 `./gradlew :mod:build` builds the mod jar (with the voice server inside); that's all a server needs, the rest comes

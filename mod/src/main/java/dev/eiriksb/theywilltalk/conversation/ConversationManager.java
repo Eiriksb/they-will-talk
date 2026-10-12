@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.eiriksb.theywilltalk.TheyWillTalk;
+import dev.eiriksb.theywilltalk.TwtApi;
+import dev.eiriksb.theywilltalk.api.TurnInfo;
 import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.ai.LlmClient;
 import dev.eiriksb.theywilltalk.ai.SentenceStream;
@@ -425,6 +427,7 @@ public final class ConversationManager {
             facts.moodLevel = moodLevels.getOrDefault(villager.getUUID(), 0);
         }
         List<String> world = WorldContext.capture(villager, player, this::nameOf);
+        TwtApi.INSTANCE.contribute(villager, player, facts);
         store.saveFacts(facts);
 
         String playerName = player == null ? "a traveler" : player.getGameProfile().getName();
@@ -501,6 +504,7 @@ public final class ConversationManager {
         VillagerProfile profile = turn.profile;
         UUID vid = profile.uuid();
         boolean scripted = turn.channel.scripted();
+        TurnInfo info = null;
         try {
             Store.Relationship rel = store.relationship(vid, turn.playerId).get(3, TimeUnit.SECONDS);
             List<Store.Memory> memories = store.memories(vid, turn.playerId, 6).get(3, TimeUnit.SECONDS);
@@ -514,6 +518,15 @@ public final class ConversationManager {
             if (!scripted) {
                 store.addMessage(session.conversationId, vid, turn.playerId, "player", turn.playerName, turn.text, turn.originalText,
                         turn.lang, null, 0);
+            }
+            boolean fromPlayer = turn.channel == Channel.VOICE || turn.channel == Channel.TEXT || turn.channel == Channel.COMMAND
+                    || turn.channel == Channel.DASHBOARD;
+            if (fromPlayer && turn.player != null && TwtApi.INSTANCE.hasHooks()) {
+                info = new TurnInfo(vid, profile.name(), turn.facts.kind, turn.playerId, turn.playerName, turn.text, turn.originalText,
+                        turn.lang, turn.channel.name().toLowerCase(Locale.ROOT), turn.facts);
+                if (TwtApi.INSTANCE.beforeReply(info)) {
+                    return; // another mod took this turn over
+                }
             }
             // Answering in the player's language: give the model their own words rather than the English translation.
             boolean ownLanguage = !turn.replyLang.equals(Languages.ENGLISH) && turn.originalText != null && !turn.originalText.isBlank();
@@ -635,6 +648,9 @@ public final class ConversationManager {
             ev.addProperty("latencyMs", turn.firstAudioMs);
             ev.addProperty("tokensPerSecond", Math.round(llm.lastTokensPerSecond));
             feed.publish("reply", ev);
+            if (info != null) {
+                TwtApi.INSTANCE.afterReply(info, reply, emotion);
+            }
 
             if (turn.player != null && !scripted) {
                 reflect(turn, List.of(new PromptBuilder.Turn("player", turn.text, null), new PromptBuilder.Turn("villager", reply, emotion)));
@@ -1143,12 +1159,14 @@ public final class ConversationManager {
     }
 
     private static ChatFormatting kindColor(VillagerKind kind) {
-        return switch (kind) {
-            case MCA -> ChatFormatting.GOLD;
-            case MINECOLONIES -> ChatFormatting.AQUA;
-            case WANDERING_TRADER -> ChatFormatting.BLUE;
-            default -> ChatFormatting.GREEN;
-        };
+        if (kind == VillagerKind.MCA) {
+            return ChatFormatting.GOLD;
+        } else if (kind == VillagerKind.MINECOLONIES) {
+            return ChatFormatting.AQUA;
+        } else if (kind == VillagerKind.WANDERING_TRADER) {
+            return ChatFormatting.BLUE;
+        }
+        return ChatFormatting.GREEN;
     }
 
     private String nameOf(Entity e) {

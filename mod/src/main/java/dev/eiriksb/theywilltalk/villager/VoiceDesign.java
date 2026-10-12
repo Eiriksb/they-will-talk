@@ -35,11 +35,16 @@ public final class VoiceDesign {
         String pitch = p.pitch() < 0.95 ? "low-pitched" : p.pitch() > 1.06 ? "high-pitched" : "medium-pitched";
         String pace = p.speed() < 0.95 ? "speaks slowly" : p.speed() > 1.06 ? "speaks quickly" : "speaks at a natural pace";
         String timbre = TIMBRES.get(r.nextInt(TIMBRES.size()));
-        String role = switch (f.kind == null ? VillagerKind.VANILLA : f.kind) {
-            case WANDERING_TRADER -> "a mysterious travelling merchant";
-            case MINECOLONIES -> "a hard-working colonist" + (f.job == null ? "" : " (" + f.job + ")");
-            default -> "a medieval village " + (f.job == null || f.job.startsWith("unemployed") ? "commoner" : f.job.split(" ")[0]);
-        };
+        String role;
+        if (f.role != null && !f.role.isBlank()) {
+            role = f.role.trim();
+        } else if (f.kind == VillagerKind.WANDERING_TRADER) {
+            role = "a mysterious travelling merchant";
+        } else if (f.kind == VillagerKind.MINECOLONIES) {
+            role = "a hard-working colonist" + (f.job == null ? "" : " (" + f.job + ")");
+        } else {
+            role = "a medieval village " + (f.job == null || f.job.startsWith("unemployed") ? "commoner" : f.job.split(" ")[0]);
+        }
         return age + ", " + role + ", with a " + pitch + ", " + timbre + " voice; " + pace + ". Personality: "
                 + persona.description + ". Expressive, characterful storybook delivery.";
     }

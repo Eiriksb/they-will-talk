@@ -37,6 +37,13 @@ public final class VillagerFacts {
     public final Map<String, String> extra = new LinkedHashMap<>();
     public boolean sleeping;
     public String customPrompt;
+    /**
+     * Who they are, for kinds TWT doesn't know: "a builder in the town of Elvebakken". Replaces the built-in
+     * description in the prompt and the voice design. Null for the default.
+     */
+    public String role;
+    /** Lines about what's going on right now, for the prompt (added by adapters, prompt contributors and hooks). */
+    public final List<String> context = new ArrayList<>();
     public String dimension;
     public double x, y, z;
     public boolean alive = true;
