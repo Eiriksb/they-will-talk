@@ -3,6 +3,7 @@ package dev.eiriksb.theywilltalk.api;
 import dev.eiriksb.theywilltalk.TwtApi;
 import dev.eiriksb.theywilltalk.villager.VillagerAdapter;
 import dev.eiriksb.theywilltalk.villager.VillagerKind;
+import net.minecraft.world.entity.Entity;
 
 import java.util.function.BooleanSupplier;
 
@@ -16,8 +17,8 @@ import java.util.function.BooleanSupplier;
  * internal and may change without notice. {@link #VERSION} goes up whenever something is added.
  */
 public interface TheyWillTalkApi {
-    /** 1: kinds, adapters, prompt contributors, conversation hooks. */
-    int VERSION = 1;
+    /** 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. */
+    int VERSION = 2;
 
     static TheyWillTalkApi get() {
         return TwtApi.INSTANCE;
@@ -42,4 +43,7 @@ public interface TheyWillTalkApi {
 
     /** Whether a world is loaded and TWT is running (its database is open). */
     boolean running();
+
+    /** Whether TWT can talk to this entity right now: an adapter knows it and its kind is enabled. Server thread. */
+    boolean canTalk(Entity entity);
 }

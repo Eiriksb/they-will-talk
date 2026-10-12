@@ -149,7 +149,8 @@ public final class VillagerRegistry {
             persona = personaForJob(f, r);
         }
         String quirk = Persona.QUIRKS.get(r.nextInt(Persona.QUIRKS.size()));
-        String backstory = f.kind == VillagerKind.WANDERING_TRADER
+        String backstory = f.backstory != null && !f.backstory.isBlank() ? f.backstory
+                : f.kind == VillagerKind.WANDERING_TRADER
                 ? "travels from village to village with two llamas, never staying more than a few days"
                 : Persona.BACKSTORIES.get(r.nextInt(Persona.BACKSTORIES.size()));
         return new VillagerProfile(f.uuid, f.kind, name, gender, persona.key, quirk, backstory, "", 1.0, 1.0, "",

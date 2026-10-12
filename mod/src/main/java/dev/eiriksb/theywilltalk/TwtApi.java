@@ -61,6 +61,13 @@ public final class TwtApi implements TheyWillTalkApi {
         return mod != null && mod.store() != null && mod.server() != null;
     }
 
+    @Override
+    public boolean canTalk(Entity entity) {
+        TheyWillTalk mod = TheyWillTalk.get();
+        VillagerRegistry registry = mod == null ? null : mod.villagers();
+        return registry != null && registry.canTalk(entity);
+    }
+
     // ---- used by TWT ---------------------------------------------------------------------------------------------
 
     /** Adds the adapters registered so far to a freshly made registry, ahead of the built-in ones. */

@@ -42,6 +42,11 @@ public final class VillagerFacts {
      * description in the prompt and the voice design. Null for the default.
      */
     public String role;
+    /**
+     * Their story, for kinds TWT doesn't know: "left a fishing village up north after a hard winter" (read as "you
+     * ..."). Used when the villager is first met; null lets TWT pick one of its village stories.
+     */
+    public String backstory;
     /** Lines about what's going on right now, for the prompt (added by adapters, prompt contributors and hooks). */
     public final List<String> context = new ArrayList<>();
     public String dimension;
