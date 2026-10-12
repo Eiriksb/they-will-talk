@@ -3,7 +3,12 @@ package dev.eiriksb.theywilltalk.api;
 import dev.eiriksb.theywilltalk.TwtApi;
 import dev.eiriksb.theywilltalk.villager.VillagerAdapter;
 import dev.eiriksb.theywilltalk.villager.VillagerKind;
+import dev.eiriksb.theywilltalk.villager.VillagerProfile;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
+
+import java.util.Optional;
+import java.util.UUID;
 
 import java.util.function.BooleanSupplier;
 
@@ -17,8 +22,11 @@ import java.util.function.BooleanSupplier;
  * internal and may change without notice. {@link #VERSION} goes up whenever something is added.
  */
 public interface TheyWillTalkApi {
-    /** 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. 3: {@link #memory}, reflection fields. */
-    int VERSION = 3;
+    /**
+     * 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. 3: {@link #memory}, reflection
+     * fields. 4: {@link #llm}, {@link #speak}, {@link #profile}.
+     */
+    int VERSION = 4;
 
     static TheyWillTalkApi get() {
         return TwtApi.INSTANCE;
@@ -52,4 +60,18 @@ public interface TheyWillTalkApi {
 
     /** Adds a question to the reflection after each reply to a player. */
     void addReflectionField(ReflectionField field);
+
+    /** The language model, for other mods' own calls. */
+    LlmApi llm();
+
+    /**
+     * The villager says something to a player on their own initiative, in their own words and voice: {@code instruction}
+     * tells them what's going on ("You just finished building the cottage; tell them proudly"). Server thread.
+     *
+     * @return false when they can't right now (already talking, the model isn't running)
+     */
+    boolean speak(Entity villager, ServerPlayer player, String instruction);
+
+    /** Who a villager is (name, personality, quirk, backstory), once TWT has met them. */
+    Optional<VillagerProfile> profile(UUID villager);
 }

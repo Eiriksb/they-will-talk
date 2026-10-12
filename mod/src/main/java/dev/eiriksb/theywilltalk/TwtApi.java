@@ -1,7 +1,10 @@
 package dev.eiriksb.theywilltalk;
 
 import dev.eiriksb.theywilltalk.api.BeforeReply;
+import com.google.gson.JsonObject;
+import dev.eiriksb.theywilltalk.ai.LlmClient;
 import dev.eiriksb.theywilltalk.api.ConversationHook;
+import dev.eiriksb.theywilltalk.api.LlmApi;
 import dev.eiriksb.theywilltalk.api.MemoryApi;
 import dev.eiriksb.theywilltalk.api.ReflectionField;
 import dev.eiriksb.theywilltalk.api.PromptContributor;
@@ -10,12 +13,15 @@ import dev.eiriksb.theywilltalk.api.TurnInfo;
 import dev.eiriksb.theywilltalk.villager.VillagerAdapter;
 import dev.eiriksb.theywilltalk.villager.VillagerFacts;
 import dev.eiriksb.theywilltalk.villager.VillagerKind;
+import dev.eiriksb.theywilltalk.villager.VillagerProfile;
 import dev.eiriksb.theywilltalk.villager.VillagerRegistry;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -30,6 +36,36 @@ public final class TwtApi implements TheyWillTalkApi {
     private final List<ConversationHook> hooks = new CopyOnWriteArrayList<>();
     private final List<ReflectionField> reflectionFields = new CopyOnWriteArrayList<>();
     private final MemoryApi memory = new TwtMemoryApi();
+    private final LlmApi llm = new LlmApi() {
+        @Override
+        public boolean ready() {
+            TheyWillTalk mod = TheyWillTalk.get();
+            return mod != null && mod.runtime() != null && mod.llm() != null && mod.runtime().llmReady();
+        }
+
+        private CompletableFuture<String> call(String system, String user, JsonObject schema, int maxTokens, Priority priority) {
+            if (!ready()) {
+                return CompletableFuture.failedFuture(new IllegalStateException("The language model isn't running"));
+            }
+            LlmClient.Priority p = switch (priority) {
+                case CONVERSATION -> LlmClient.Priority.CONVERSATION;
+                case PLANNING -> LlmClient.Priority.PLANNING;
+                case BACKGROUND -> LlmClient.Priority.AMBIENT;
+            };
+            return TheyWillTalk.get().llm().chat(p, List.of(LlmClient.Message.system(system), LlmClient.Message.user(user)),
+                    schema == null ? 0.8 : 0.4, maxTokens, schema, null).thenApply(LlmClient.Result::text);
+        }
+
+        @Override
+        public CompletableFuture<String> json(String system, String user, JsonObject schema, int maxTokens, Priority priority) {
+            return call(system, user, schema, maxTokens, priority);
+        }
+
+        @Override
+        public CompletableFuture<String> text(String system, String user, int maxTokens, Priority priority) {
+            return call(system, user, null, maxTokens, priority);
+        }
+    };
 
     private TwtApi() {}
 
@@ -83,6 +119,26 @@ public final class TwtApi implements TheyWillTalkApi {
             throw new IllegalArgumentException("Reflection field names are lowercase letters, digits and _: " + field.name());
         }
         reflectionFields.add(field);
+    }
+
+    @Override
+    public LlmApi llm() {
+        return llm;
+    }
+
+    @Override
+    public boolean speak(Entity villager, ServerPlayer player, String instruction) {
+        TheyWillTalk mod = TheyWillTalk.get();
+        if (mod == null || mod.conversationManager() == null || !llm.ready() || !canTalk(villager)) {
+            return false;
+        }
+        return mod.conversationManager().event(villager, player, instruction, null);
+    }
+
+    @Override
+    public Optional<VillagerProfile> profile(UUID villager) {
+        TheyWillTalk mod = TheyWillTalk.get();
+        return mod == null || mod.villagers() == null ? Optional.empty() : Optional.ofNullable(mod.villagers().cached(villager));
     }
 
     /** The extra reflection fields that apply to this turn. */

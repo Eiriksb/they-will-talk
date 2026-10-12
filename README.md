@@ -155,6 +155,9 @@ Other mods can make their own entities talk and add to conversations through `de
 * `memory()`: villagers' memories (about players, each other, places, anything: with importance and where they heard
   it), recall by what's being said, passing gossip on, and villager↔villager relations.
 * `addReflectionField`: an extra question in the reflection after each reply (no extra LLM call).
+* `llm()`: the language model for other mods' own calls (JSON or text), sharing TWT's queue so players go first.
+* `speak`: a villager says something to a player on their own initiative, in their own words and voice.
+* `profile`: who a villager is (personality, quirk, backstory).
 * `TwtReadyEvent` on the game bus once a world is loaded and TWT is running.
 
 Only that package and `VillagerAdapter`, `VillagerFacts`, `VillagerKind` and `VillagerProfile` are API; the rest may

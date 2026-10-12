@@ -29,7 +29,7 @@ import java.util.function.Supplier;
  * reflection or ambient villager chatter.
  */
 public final class LlmClient {
-    public enum Priority { CONVERSATION, GREETING, REFLECTION, AMBIENT }
+    public enum Priority { CONVERSATION, GREETING, REFLECTION, PLANNING, AMBIENT }
 
     public record Message(String role, String content) {
         public static Message system(String c) { return new Message("system", c); }
