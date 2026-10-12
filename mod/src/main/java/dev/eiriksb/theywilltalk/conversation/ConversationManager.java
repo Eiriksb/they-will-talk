@@ -1063,6 +1063,11 @@ public final class ConversationManager {
                 int delta = Math.max(-5, Math.min(5, o.get("affinity_delta").getAsInt()));
                 String mood = o.get("mood").getAsString();
                 String memory = o.get("memory").getAsString().trim();
+                // Small models sometimes write it like a line of dialogue: "Gunnar: Tester said ..."
+                String speaker = turn.profile.firstName() + ":";
+                if (memory.regionMatches(true, 0, speaker, 0, speaker.length())) {
+                    memory = memory.substring(speaker.length()).trim();
+                }
                 UUID vid = turn.profile.uuid();
                 store.adjustAffinity(vid, turn.playerId, delta);
                 affinity.merge(vid + "|" + turn.playerId, delta, (a, b) -> Math.max(-100, Math.min(100, a + b)));
