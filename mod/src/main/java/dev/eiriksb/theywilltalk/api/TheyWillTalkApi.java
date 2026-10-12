@@ -17,8 +17,8 @@ import java.util.function.BooleanSupplier;
  * internal and may change without notice. {@link #VERSION} goes up whenever something is added.
  */
 public interface TheyWillTalkApi {
-    /** 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. */
-    int VERSION = 2;
+    /** 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. 3: {@link #memory}, reflection fields. */
+    int VERSION = 3;
 
     static TheyWillTalkApi get() {
         return TwtApi.INSTANCE;
@@ -46,4 +46,10 @@ public interface TheyWillTalkApi {
 
     /** Whether TWT can talk to this entity right now: an adapter knows it and its kind is enabled. Server thread. */
     boolean canTalk(Entity entity);
+
+    /** Villagers' memories and relationships (with players and with each other). */
+    MemoryApi memory();
+
+    /** Adds a question to the reflection after each reply to a player. */
+    void addReflectionField(ReflectionField field);
 }

@@ -2,12 +2,17 @@ package dev.eiriksb.theywilltalk.data;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
+import dev.eiriksb.theywilltalk.TheyWillTalk;
+import dev.eiriksb.theywilltalk.api.NewMemory;
+import dev.eiriksb.theywilltalk.api.Relation;
+import dev.eiriksb.theywilltalk.api.Subject;
 import dev.eiriksb.theywilltalk.villager.VillagerFacts;
 import dev.eiriksb.theywilltalk.villager.VillagerKind;
 import dev.eiriksb.theywilltalk.villager.VillagerProfile;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -144,34 +149,182 @@ public final class Store {
 
     // ---- memories ---------------------------------------------------------------------------------------------
 
+    /** Something a villager remembers about a player (player null: about nothing in particular), worth 3 of 10. */
     public void addMemory(UUID villager, UUID player, String kind, String text) {
-        if (text == null || text.isBlank()) {
-            return;
-        }
-        db.exec("INSERT INTO memories (villager_uuid, player_uuid, created, kind, text) VALUES (?,?,?,?,?)",
-                villager, player, System.currentTimeMillis(), kind, text.trim());
+        addMemory(villager, player, kind, text, 3);
     }
 
-    public record Memory(long created, String kind, String text, String villagerName) {}
+    public void addMemory(UUID villager, UUID player, String kind, String text, int importance) {
+        remember(NewMemory.of(villager, player == null ? Subject.NONE : Subject.player(player), text).withKind(kind).withImportance(importance))
+                .exceptionally(t -> {
+                    TheyWillTalk.LOGGER.warn("Could not save a memory: {}", t.toString());
+                    return -1L;
+                });
+    }
+
+    /** Adds a memory; completes with its id (-1 when there was nothing to remember). */
+    public CompletableFuture<Long> remember(NewMemory m) {
+        String text = m.text() == null ? "" : m.text().trim();
+        if (text.isEmpty()) {
+            return CompletableFuture.completedFuture(-1L);
+        }
+        Subject s = m.subject();
+        String player = "player".equals(s.type()) ? s.id() : null;
+        return db.insert("""
+                        INSERT INTO memories (villager_uuid, player_uuid, created, kind, text, subject_type, subject_id, importance, source)
+                        VALUES (?,?,?,?,?,?,?,?,?)""",
+                m.villager(), player, System.currentTimeMillis(), m.kind(), text, s.isNone() ? null : s.type(), s.isNone() ? null : s.id(),
+                m.importance(), m.source());
+    }
+
+    /**
+     * A memory for the prompts.
+     *
+     * @param villagerName who remembers it (gossip), else null
+     * @param toldBy       who told them (hearsay), else null
+     */
+    public record Memory(long created, String kind, String text, String villagerName, int importance, String toldBy, long id) {}
+
+    /** Hearsay names its teller: memories.source is 'told_by:<uuid>'. */
+    private static final String TELLER = " LEFT JOIN villagers t ON m.source = 'told_by:' || t.uuid ";
 
     public CompletableFuture<List<Memory>> memories(UUID villager, UUID player, int limit) {
         return db.query("""
-                        SELECT created, kind, text, NULL FROM memories WHERE villager_uuid=? AND (player_uuid=? OR player_uuid IS NULL)
-                        ORDER BY created DESC LIMIT ?""",
-                rs -> new Memory(rs.getLong(1), rs.getString(2), rs.getString(3), null), villager, player, limit);
+                        SELECT m.created, m.kind, m.text, m.importance, t.name, m.id FROM memories m""" + TELLER + """
+                        WHERE m.villager_uuid=? AND (m.player_uuid=? OR m.subject_type IS NULL) AND m.summarised_into IS NULL
+                        ORDER BY m.created DESC LIMIT ?""",
+                rs -> new Memory(rs.getLong(1), rs.getString(2), rs.getString(3), null, rs.getInt(4), rs.getString(5), rs.getLong(6)),
+                villager, player, limit);
     }
 
-    /** What other villagers of the same village remember about this player - the village gossip network. */
+    /** What other villagers of the same village saw of this player themselves - the village gossip network. */
     public CompletableFuture<List<Memory>> gossip(UUID player, String villageKey, UUID exclude, int limit) {
         if (villageKey == null) {
             return CompletableFuture.completedFuture(List.of());
         }
         return db.query("""
-                        SELECT m.created, m.kind, m.text, v.name FROM memories m JOIN villagers v ON v.uuid = m.villager_uuid
+                        SELECT m.created, m.kind, m.text, v.name, m.importance, m.id FROM memories m JOIN villagers v ON v.uuid = m.villager_uuid
                         WHERE m.player_uuid=? AND v.village_key=? AND m.villager_uuid<>? AND m.created > ?
+                          AND m.source NOT LIKE 'told_by:%' AND m.summarised_into IS NULL
                         ORDER BY m.created DESC LIMIT ?""",
-                rs -> new Memory(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4)),
+                rs -> new Memory(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getInt(5), null, rs.getLong(6)),
                 player, villageKey, exclude, System.currentTimeMillis() - 7L * 24 * 3600 * 1000, limit);
+    }
+
+    // The memory API (dev.eiriksb.theywilltalk.api.MemoryApi) reads these.
+
+    private static final String API_COLS = "m.id, m.villager_uuid, m.created, m.kind, m.text, m.subject_type, m.subject_id, m.importance, m.source, t.name AS teller";
+
+    private static dev.eiriksb.theywilltalk.api.Memory apiMemory(ResultSet rs) throws SQLException {
+        String type = rs.getString("subject_type");
+        Subject subject = type == null ? Subject.NONE : new Subject(type, rs.getString("subject_id"));
+        return new dev.eiriksb.theywilltalk.api.Memory(rs.getLong("id"), UUID.fromString(rs.getString("villager_uuid")),
+                rs.getLong("created"), rs.getString("kind"), rs.getString("text"), subject, Math.max(1, rs.getInt("importance")),
+                rs.getString("source"), rs.getString("teller"));
+    }
+
+    public CompletableFuture<List<dev.eiriksb.theywilltalk.api.Memory>> memoriesAbout(UUID villager, Subject subject, int limit) {
+        if (subject.isNone()) {
+            return db.query("SELECT " + API_COLS + " FROM memories m" + TELLER + """
+                    WHERE m.villager_uuid=? AND m.subject_type IS NULL AND m.summarised_into IS NULL ORDER BY m.created DESC LIMIT ?""",
+                    Store::apiMemory, villager, limit);
+        }
+        return db.query("SELECT " + API_COLS + " FROM memories m" + TELLER + """
+                WHERE m.villager_uuid=? AND m.subject_type=? AND m.subject_id=? AND m.summarised_into IS NULL
+                ORDER BY m.created DESC LIMIT ?""", Store::apiMemory, villager, subject.type(), subject.id(), limit);
+    }
+
+    public CompletableFuture<List<dev.eiriksb.theywilltalk.api.Memory>> recentMemories(UUID villager, int limit) {
+        return db.query("SELECT " + API_COLS + " FROM memories m" + TELLER + """
+                WHERE m.villager_uuid=? AND m.summarised_into IS NULL ORDER BY m.created DESC LIMIT ?""", Store::apiMemory, villager, limit);
+    }
+
+    private record Scored(dev.eiriksb.theywilltalk.api.Memory memory, double bm25) {}
+
+    /** The memories that best fit {@code text}: shared words, then importance and recency ({@link MemoryRanking}). */
+    public CompletableFuture<List<dev.eiriksb.theywilltalk.api.Memory>> recall(UUID villager, String text, int limit) {
+        String query = MemoryRanking.ftsQuery(text);
+        if (query == null) {
+            return CompletableFuture.completedFuture(List.of());
+        }
+        return db.call(c -> {
+            List<Scored> found = Database.queryNow(c, "SELECT " + API_COLS + ", bm25(memories_fts) AS rel FROM memories_fts"
+                            + " JOIN memories m ON m.id = memories_fts.rowid" + TELLER + """
+                            WHERE memories_fts MATCH ? AND m.villager_uuid=? AND m.summarised_into IS NULL ORDER BY rel LIMIT 40""",
+                    rs -> new Scored(apiMemory(rs), rs.getDouble("rel")), query, villager.toString());
+            return MemoryRanking.rank(found, Scored::bm25, s -> s.memory().importance(), s -> s.memory().created(),
+                    System.currentTimeMillis(), limit).stream().map(Scored::memory).toList();
+        });
+    }
+
+    /**
+     * {@code from} passes on up to {@code limit} memories of at least {@code minImportance} that {@code to} doesn't have:
+     * copied as hearsay, one point less important. Completes with how many were passed on.
+     */
+    public CompletableFuture<Integer> tell(UUID from, UUID to, Subject subject, int minImportance, int limit) {
+        return db.call(c -> {
+            String about = subject.isNone() ? "" : " AND m.subject_type=? AND m.subject_id=?";
+            List<Object> params = new ArrayList<>(List.of(from.toString()));
+            if (!subject.isNone()) {
+                params.add(subject.type());
+                params.add(subject.id());
+            }
+            params.addAll(List.of(minImportance, to.toString(), "told_by:" + to, limit));
+            List<dev.eiriksb.theywilltalk.api.Memory> news = Database.queryNow(c, "SELECT " + API_COLS + " FROM memories m" + TELLER
+                            + "WHERE m.villager_uuid=?" + about + """
+                             AND m.importance >= ? AND m.summarised_into IS NULL
+                              AND NOT EXISTS (SELECT 1 FROM memories k WHERE k.villager_uuid=? AND k.text=m.text)
+                              AND m.source <> ?
+                            ORDER BY m.importance DESC, m.created DESC LIMIT ?""",
+                    Store::apiMemory, params.toArray());
+            long now = System.currentTimeMillis();
+            for (dev.eiriksb.theywilltalk.api.Memory m : news) {
+                Subject s = m.subject();
+                Database.update(c, """
+                                INSERT INTO memories (villager_uuid, player_uuid, created, kind, text, subject_type, subject_id, importance, source)
+                                VALUES (?,?,?,?,?,?,?,?,?)""",
+                        to.toString(), "player".equals(s.type()) ? s.id() : null, now, m.kind(), m.text(), s.isNone() ? null : s.type(),
+                        s.isNone() ? null : s.id(), Math.max(1, m.importance() - 1), "told_by:" + from);
+            }
+            return news.size();
+        });
+    }
+
+    // ---- villager <-> villager relations ------------------------------------------------------------------------
+
+    private static Relation relation(ResultSet rs) throws SQLException {
+        return new Relation(UUID.fromString(rs.getString("a")), UUID.fromString(rs.getString("b")), rs.getString("name"),
+                rs.getInt("affinity"), rs.getInt("familiarity"), rs.getString("kind"), rs.getLong("last_interaction"));
+    }
+
+    public CompletableFuture<Relation> villagerRelation(UUID a, UUID b) {
+        return db.query("""
+                        SELECT r.a, r.b, v.name, r.affinity, r.familiarity, r.kind, r.last_interaction FROM villager_relations r
+                        LEFT JOIN villagers v ON v.uuid = r.b WHERE r.a=? AND r.b=?""", Store::relation, a, b)
+                .thenApply(l -> l.isEmpty() ? Relation.none(a, b) : l.getFirst());
+    }
+
+    public CompletableFuture<List<Relation>> villagerRelations(UUID a, int limit) {
+        return db.query("""
+                        SELECT r.a, r.b, v.name, r.affinity, r.familiarity, r.kind, r.last_interaction FROM villager_relations r
+                        LEFT JOIN villagers v ON v.uuid = r.b WHERE r.a=? ORDER BY r.familiarity DESC, r.last_interaction DESC LIMIT ?""",
+                Store::relation, a, limit);
+    }
+
+    public void adjustVillagerRelation(UUID a, UUID b, int affinityDelta, int familiarityDelta) {
+        long now = System.currentTimeMillis();
+        int aff = Math.max(-100, Math.min(100, affinityDelta));
+        db.exec("""
+                INSERT INTO villager_relations (a, b, affinity, familiarity, last_interaction) VALUES (?,?,?,?,?)
+                ON CONFLICT(a, b) DO UPDATE SET affinity=MAX(-100, MIN(100, affinity + ?)), familiarity=MAX(0, familiarity + ?),
+                  last_interaction=excluded.last_interaction""",
+                a, b, aff, Math.max(0, familiarityDelta), now, affinityDelta, familiarityDelta);
+    }
+
+    public void setVillagerRelationKind(UUID a, UUID b, String kind) {
+        db.exec("""
+                INSERT INTO villager_relations (a, b, kind, last_interaction) VALUES (?,?,?,?)
+                ON CONFLICT(a, b) DO UPDATE SET kind=excluded.kind""", a, b, kind, System.currentTimeMillis());
     }
 
     // ---- conversations ----------------------------------------------------------------------------------------

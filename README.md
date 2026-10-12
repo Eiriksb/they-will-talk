@@ -61,7 +61,8 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
   subtitles, bubbles and the map, and a beep in the voice (`Profanity`). Turning *bleep swear words* off lets them
   swear uncensored. Slurs are always censored.
 * **Remembering.** After each exchange a structured LLM call rates how the villager's opinion changed and what to
-  remember; hitting, trading, killing villagers in front of others all become memories. MCA hearts and moods are
+  remember, and how much it matters (1-10). What a player says brings related memories back to mind (full-text search,
+  ranked by relevance, importance and recency). Villagers who chat pass important news on to each other as hearsay; hitting, trading, killing villagers in front of others all become memories. MCA hearts and moods are
   updated through MCA's own API.
 * **Being lively.** Villagers stop and look at you, nod/shake their heads, show particles, and occasionally chat with
   each other (sometimes asking a player nearby what they think).
@@ -151,6 +152,9 @@ Other mods can make their own entities talk and add to conversations through `de
   filling `VillagerFacts`; set `facts.role` to describe who they are).
 * `addPromptContributor`: lines about what's going on, added to every turn's prompt.
 * `addConversationHook`: runs before each reply to a player (add context, or take the turn over) and after it.
+* `memory()`: villagers' memories (about players, each other, places, anything: with importance and where they heard
+  it), recall by what's being said, passing gossip on, and villager↔villager relations.
+* `addReflectionField`: an extra question in the reflection after each reply (no extra LLM call).
 * `TwtReadyEvent` on the game bus once a world is loaded and TWT is running.
 
 Only that package and `VillagerAdapter`, `VillagerFacts`, `VillagerKind` and `VillagerProfile` are API; the rest may

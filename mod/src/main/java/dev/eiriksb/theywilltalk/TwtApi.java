@@ -2,6 +2,8 @@ package dev.eiriksb.theywilltalk;
 
 import dev.eiriksb.theywilltalk.api.BeforeReply;
 import dev.eiriksb.theywilltalk.api.ConversationHook;
+import dev.eiriksb.theywilltalk.api.MemoryApi;
+import dev.eiriksb.theywilltalk.api.ReflectionField;
 import dev.eiriksb.theywilltalk.api.PromptContributor;
 import dev.eiriksb.theywilltalk.api.TheyWillTalkApi;
 import dev.eiriksb.theywilltalk.api.TurnInfo;
@@ -26,6 +28,8 @@ public final class TwtApi implements TheyWillTalkApi {
     private final List<VillagerAdapter> adapters = new CopyOnWriteArrayList<>();
     private final List<PromptContributor> contributors = new CopyOnWriteArrayList<>();
     private final List<ConversationHook> hooks = new CopyOnWriteArrayList<>();
+    private final List<ReflectionField> reflectionFields = new CopyOnWriteArrayList<>();
+    private final MemoryApi memory = new TwtMemoryApi();
 
     private TwtApi() {}
 
@@ -66,6 +70,31 @@ public final class TwtApi implements TheyWillTalkApi {
         TheyWillTalk mod = TheyWillTalk.get();
         VillagerRegistry registry = mod == null ? null : mod.villagers();
         return registry != null && registry.canTalk(entity);
+    }
+
+    @Override
+    public MemoryApi memory() {
+        return memory;
+    }
+
+    @Override
+    public void addReflectionField(ReflectionField field) {
+        if (field.name() == null || !field.name().matches("[a-z0-9_]+")) {
+            throw new IllegalArgumentException("Reflection field names are lowercase letters, digits and _: " + field.name());
+        }
+        reflectionFields.add(field);
+    }
+
+    /** The extra reflection fields that apply to this turn. */
+    public List<ReflectionField> reflectionFields(TurnInfo turn) {
+        return reflectionFields.stream().filter(f -> {
+            try {
+                return f.appliesTo(turn);
+            } catch (Throwable t) {
+                TheyWillTalk.LOGGER.warn("Reflection field {} failed: {}", f.name(), t.toString());
+                return false;
+            }
+        }).toList();
     }
 
     // ---- used by TWT ---------------------------------------------------------------------------------------------

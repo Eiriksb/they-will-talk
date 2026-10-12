@@ -5,6 +5,8 @@ import com.google.gson.JsonObject;
 import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.ai.LlmClient.Message;
 import dev.eiriksb.theywilltalk.ai.SentenceStream;
+import dev.eiriksb.theywilltalk.api.ReflectionField;
+import dev.eiriksb.theywilltalk.api.Relation;
 import dev.eiriksb.theywilltalk.data.Store;
 import dev.eiriksb.theywilltalk.villager.Persona;
 import dev.eiriksb.theywilltalk.villager.VillagerFacts;
@@ -183,7 +185,13 @@ public final class PromptBuilder {
         if (!memories.isEmpty()) {
             sys.append("Things you remember about them:\n");
             for (Store.Memory m : memories) {
-                sys.append("- ").append(m.text()).append(" (").append(ago(m.created())).append(")\n");
+                sys.append("- ");
+                if (m.toldBy() != null) {
+                    sys.append(m.toldBy()).append(" told you: \"").append(m.text()).append('"');
+                } else {
+                    sys.append(m.text());
+                }
+                sys.append(" (").append(ago(m.created())).append(m.importance() >= 8 ? ", important to you" : "").append(")\n");
             }
         }
         if (!gossip.isEmpty()) {
@@ -263,7 +271,7 @@ public final class PromptBuilder {
 
     // ---- reflection: how did the conversation change the relationship? ------------------------------------------
 
-    public static JsonObject reflectionSchema() {
+    public static JsonObject reflectionSchema(List<ReflectionField> extra) {
         JsonObject schema = new JsonObject();
         schema.addProperty("type", "object");
         JsonObject props = new JsonObject();
@@ -284,28 +292,62 @@ public final class PromptBuilder {
         memory.addProperty("type", "string");
         memory.addProperty("maxLength", 160);
         props.add("memory", memory);
-        schema.add("properties", props);
+        JsonObject importance = new JsonObject();
+        importance.addProperty("type", "integer");
+        importance.addProperty("minimum", 1);
+        importance.addProperty("maximum", 10);
+        props.add("importance", importance);
         JsonArray req = new JsonArray();
         req.add("affinity_delta");
         req.add("mood");
         req.add("memory");
+        req.add("importance");
+        for (ReflectionField f : extra) {
+            props.add(f.name(), f.schema());
+            req.add(f.name());
+        }
+        schema.add("properties", props);
         schema.add("required", req);
         return schema;
     }
 
-    public static List<Message> reflection(VillagerProfile p, String playerName, List<Turn> exchange) {
+    public static List<Message> reflection(VillagerProfile p, String playerName, List<Turn> exchange, List<ReflectionField> extra) {
         StringBuilder convo = new StringBuilder();
         for (Turn t : exchange) {
             convo.append(t.role().equals("player") ? playerName : p.firstName()).append(": ").append(t.text()).append('\n');
         }
-        String sys = """
+        String me = p.firstName();
+        StringBuilder sys = new StringBuilder("""
                 You analyse a short conversation between the Minecraft villager %s (personality: %s) and the player %s.
                 Output JSON:
                 - affinity_delta: how much %s's opinion of %s changed, from -5 (insulted, threatened, hurt) to +5 (gift, kindness, big help). Small talk is 0 or +1.
                 - mood: %s's mood after the conversation.
-                - memory: ONE short sentence, written from %s's point of view, worth remembering about %s next time (a fact, promise, request, gift or insult). Use "" if nothing notable was said.
-                """.formatted(p.name(), p.personaEnum().key, playerName, p.firstName(), playerName, p.firstName(), p.firstName(), playerName);
-        return List.of(Message.system(sys), Message.user(convo.toString()));
+                - memory: ONE short sentence in %s's own words ("I" is %s), worth remembering about %s next time: a fact about %s, a promise, request, gift or insult. Name %s; don't mix up who said what. Use "" if nothing notable was said.
+                - importance: how much the memory matters to %s, from 1 (small talk) to 10 (life-changing: a death, a home lost, a huge favour). Most things are 2 to 5.
+                """.formatted(p.name(), p.personaEnum().key, playerName, me, playerName, me, me, me, playerName, playerName, playerName, me));
+        for (ReflectionField f : extra) {
+            sys.append("- ").append(f.name()).append(": ")
+                    .append(f.instruction().replace("{villager}", me).replace("{player}", playerName)).append('\n');
+        }
+        return List.of(Message.system(sys.toString()), Message.user(convo.toString()));
+    }
+
+    /** How two villagers stand with each other, for their ambient chat. */
+    public static String relationLine(String a, String b, Relation ab, Relation ba) {
+        int talks = Math.max(ab.familiarity(), ba.familiarity());
+        StringBuilder sb = new StringBuilder(a).append(" and ").append(b);
+        sb.append(talks == 0 ? " have hardly spoken before" : talks < 5 ? " know each other a little"
+                : talks < 15 ? " know each other well" : " are old acquaintances");
+        if (ab.kind() != null) {
+            sb.append("; ").append(b).append(" is ").append(a).append("'s ").append(ab.kind());
+        }
+        sb.append(feeling(a, b, ab.affinity())).append(feeling(b, a, ba.affinity()));
+        return sb.toString();
+    }
+
+    private static String feeling(String who, String other, int affinity) {
+        return affinity >= 40 ? "; " + who + " is fond of " + other : affinity >= 15 ? "; " + who + " likes " + other
+                : affinity <= -40 ? "; " + who + " can't stand " + other : affinity <= -15 ? "; " + who + " is wary of " + other : "";
     }
 
     // ---- ambient chatter between two villagers -----------------------------------------------------------------

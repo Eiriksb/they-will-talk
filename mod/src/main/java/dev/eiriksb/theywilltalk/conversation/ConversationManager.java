@@ -6,6 +6,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import dev.eiriksb.theywilltalk.TheyWillTalk;
 import dev.eiriksb.theywilltalk.TwtApi;
+import dev.eiriksb.theywilltalk.api.ReflectionField;
+import dev.eiriksb.theywilltalk.api.Subject;
 import dev.eiriksb.theywilltalk.api.TurnInfo;
 import dev.eiriksb.theywilltalk.TwtConfig;
 import dev.eiriksb.theywilltalk.ai.LlmClient;
@@ -507,7 +509,17 @@ public final class ConversationManager {
         TurnInfo info = null;
         try {
             Store.Relationship rel = store.relationship(vid, turn.playerId).get(3, TimeUnit.SECONDS);
-            List<Store.Memory> memories = store.memories(vid, turn.playerId, 6).get(3, TimeUnit.SECONDS);
+            List<Store.Memory> memories = new ArrayList<>(store.memories(vid, turn.playerId, 5).get(3, TimeUnit.SECONDS));
+            if (!scripted) {
+                // What the player just said may bring older memories to mind (the roof they promised to fix, the raid...).
+                java.util.Set<Long> have = new java.util.HashSet<>();
+                memories.forEach(m -> have.add(m.id()));
+                for (dev.eiriksb.theywilltalk.api.Memory m : store.recall(vid, turn.text, 3).get(3, TimeUnit.SECONDS)) {
+                    if (have.add(m.id())) {
+                        memories.add(new Store.Memory(m.created(), m.kind(), m.text(), null, m.importance(), m.toldBy(), m.id()));
+                    }
+                }
+            }
             List<Store.Memory> gossip = store.gossip(turn.playerId, turn.facts.village == null ? null : turn.facts.village.key(), vid, 3)
                     .get(3, TimeUnit.SECONDS);
 
@@ -521,10 +533,10 @@ public final class ConversationManager {
             }
             boolean fromPlayer = turn.channel == Channel.VOICE || turn.channel == Channel.TEXT || turn.channel == Channel.COMMAND
                     || turn.channel == Channel.DASHBOARD;
-            if (fromPlayer && turn.player != null && TwtApi.INSTANCE.hasHooks()) {
+            if (fromPlayer && turn.player != null) {
                 info = new TurnInfo(vid, profile.name(), turn.facts.kind, turn.playerId, turn.playerName, turn.text, turn.originalText,
                         turn.lang, turn.channel.name().toLowerCase(Locale.ROOT), turn.facts);
-                if (TwtApi.INSTANCE.beforeReply(info)) {
+                if (TwtApi.INSTANCE.hasHooks() && TwtApi.INSTANCE.beforeReply(info)) {
                     return; // another mod took this turn over
                 }
             }
@@ -653,7 +665,7 @@ public final class ConversationManager {
             }
 
             if (turn.player != null && !scripted) {
-                reflect(turn, List.of(new PromptBuilder.Turn("player", turn.text, null), new PromptBuilder.Turn("villager", reply, emotion)));
+                reflect(turn, info, List.of(new PromptBuilder.Turn("player", turn.text, null), new PromptBuilder.Turn("villager", reply, emotion)));
             }
             if (chimeIn != null) {
                 chimeIn(turn, session, round, chimeIn, stream);
@@ -1042,9 +1054,10 @@ public final class ConversationManager {
     }
 
     /** After the reply: ask the LLM (in the background) how this changed the relationship, then remember it. */
-    private void reflect(Turn turn, List<PromptBuilder.Turn> exchange) {
-        llm.chat(LlmClient.Priority.REFLECTION, PromptBuilder.reflection(turn.profile, turn.playerName, exchange), 0.2, 160,
-                PromptBuilder.reflectionSchema(), null).thenAccept(result -> {
+    private void reflect(Turn turn, TurnInfo info, List<PromptBuilder.Turn> exchange) {
+        List<ReflectionField> fields = info == null ? List.of() : TwtApi.INSTANCE.reflectionFields(info);
+        llm.chat(LlmClient.Priority.REFLECTION, PromptBuilder.reflection(turn.profile, turn.playerName, exchange, fields), 0.2,
+                180 + 60 * fields.size(), PromptBuilder.reflectionSchema(fields), null).thenAccept(result -> {
             try {
                 JsonObject o = JsonParser.parseString(result.text()).getAsJsonObject();
                 int delta = Math.max(-5, Math.min(5, o.get("affinity_delta").getAsInt()));
@@ -1053,8 +1066,18 @@ public final class ConversationManager {
                 UUID vid = turn.profile.uuid();
                 store.adjustAffinity(vid, turn.playerId, delta);
                 affinity.merge(vid + "|" + turn.playerId, delta, (a, b) -> Math.max(-100, Math.min(100, a + b)));
+                int importance = o.has("importance") ? Math.max(1, Math.min(10, o.get("importance").getAsInt())) : 3;
                 if (!memory.isEmpty() && memory.length() > 3) {
-                    store.addMemory(vid, turn.playerId, "conversation", memory);
+                    store.addMemory(vid, turn.playerId, "conversation", memory, importance);
+                }
+                for (ReflectionField f : fields) {
+                    if (o.has(f.name())) {
+                        try {
+                            f.apply(info, o.get(f.name()));
+                        } catch (Throwable t) {
+                            TheyWillTalk.LOGGER.warn("Reflection field {} failed: {}", f.name(), t.toString());
+                        }
+                    }
                 }
                 if (turn.facts.kind != VillagerKind.MCA) {
                     int level = switch (mood) {
@@ -1278,7 +1301,10 @@ public final class ConversationManager {
             try {
                 List<Store.Memory> news = store.gossip(nearbyPlayer.getUUID(), fa.village == null ? null : fa.village.key(), new UUID(0, 0), 2)
                         .get(3, TimeUnit.SECONDS);
-                LlmClient.Result r = llm.chat(LlmClient.Priority.AMBIENT, PromptBuilder.ambient(pa, fa, pb, fb, world, playerName, news),
+                List<String> situation = new ArrayList<>(world);
+                situation.add(PromptBuilder.relationLine(pa.firstName(), pb.firstName(), store.villagerRelation(pa.uuid(), pb.uuid()).get(3, TimeUnit.SECONDS),
+                        store.villagerRelation(pb.uuid(), pa.uuid()).get(3, TimeUnit.SECONDS)));
+                LlmClient.Result r = llm.chat(LlmClient.Priority.AMBIENT, PromptBuilder.ambient(pa, fa, pb, fb, situation, playerName, news),
                         0.95, 260, PromptBuilder.ambientSchema(), null).get(60, TimeUnit.SECONDS);
                 JsonArray lines = JsonParser.parseString(r.text()).getAsJsonObject().getAsJsonArray("lines");
                 VoiceOutput out = voice.get();
@@ -1336,6 +1362,14 @@ public final class ConversationManager {
                     ev.addProperty("text", String.join("\n", transcript));
                     feed.publish("ambient", ev);
                     store.event("ambient", pa.uuid(), null, String.join(" / ", transcript));
+                    // They know each other a little better now, and swapped news: about the player nearby, and anything big.
+                    store.adjustVillagerRelation(pa.uuid(), pb.uuid(), 1, 1);
+                    store.adjustVillagerRelation(pb.uuid(), pa.uuid(), 1, 1);
+                    Subject aboutPlayer = Subject.player(nearbyPlayer.getUUID());
+                    store.tell(pa.uuid(), pb.uuid(), aboutPlayer, 4, 1);
+                    store.tell(pb.uuid(), pa.uuid(), aboutPlayer, 4, 1);
+                    store.tell(pa.uuid(), pb.uuid(), Subject.NONE, 7, 1);
+                    store.tell(pb.uuid(), pa.uuid(), Subject.NONE, 7, 1);
                 }
             } catch (Exception e) {
                 TheyWillTalk.LOGGER.debug("Ambient chat failed: {}", e.toString());
@@ -1368,7 +1402,8 @@ public final class ConversationManager {
      * @param kind "event", "trade", "errand", "gift": the memory's kind and the live feed's event type
      */
     public void remember(UUID villager, String villagerName, UUID player, String playerName, String kind, String text, int affinityDelta) {
-        store.addMemory(villager, player, kind, text);
+        // A trade is a 3, being attacked a 7, seeing someone killed a 10.
+        store.addMemory(villager, player, kind, text, Math.min(10, 3 + Math.abs(affinityDelta) / 2));
         if (affinityDelta != 0) {
             store.adjustAffinity(villager, player, affinityDelta);
             affinity.merge(villager + "|" + player, affinityDelta, (a, b) -> Math.max(-100, Math.min(100, a + b)));
@@ -1381,6 +1416,12 @@ public final class ConversationManager {
         ev.addProperty("memory", text);
         ev.addProperty("delta", affinityDelta);
         feed.publish(kind, ev);
+    }
+
+    /** Changes how a villager feels about a player (saved, and kept in the cache the prompts read). */
+    public void adjustAffinity(UUID villager, UUID player, int delta) {
+        store.adjustAffinity(villager, player, delta);
+        affinity.merge(villager + "|" + player, delta, (a, b) -> Math.max(-100, Math.min(100, a + b)));
     }
 
     /** How a villager feels about a player, -100 to 100. */

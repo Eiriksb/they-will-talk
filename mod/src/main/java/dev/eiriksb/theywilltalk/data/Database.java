@@ -30,7 +30,7 @@ public final class Database implements AutoCloseable {
         T run(Connection c) throws SQLException;
     }
 
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 4;
 
     private final ExecutorService thread = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "twt-db");
@@ -149,8 +149,48 @@ public final class Database implements AutoCloseable {
                 s.execute("CREATE INDEX IF NOT EXISTS errands_player ON errands(player_uuid, status)");
                 s.execute("CREATE INDEX IF NOT EXISTS errands_villager ON errands(villager_uuid, status)");
             }
+            if (version < 4) {
+                // v4: memories about anyone (not just players), ranked, searchable and summarisable; villager<->villager relations
+                addColumn(s, "memories", "subject_type", "TEXT");
+                addColumn(s, "memories", "subject_id", "TEXT");
+                addColumn(s, "memories", "importance", "INTEGER DEFAULT 3");
+                addColumn(s, "memories", "source", "TEXT DEFAULT 'witnessed'");
+                addColumn(s, "memories", "summarised_into", "INTEGER");
+                s.execute("UPDATE memories SET subject_type='player', subject_id=player_uuid WHERE player_uuid IS NOT NULL AND subject_type IS NULL");
+                s.execute("CREATE INDEX IF NOT EXISTS mem_subject ON memories(villager_uuid, subject_type, subject_id, created)");
+                s.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(text, content='memories', content_rowid='id')");
+                s.execute("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')");
+                s.execute("""
+                        CREATE TRIGGER IF NOT EXISTS memories_fts_ins AFTER INSERT ON memories BEGIN
+                          INSERT INTO memories_fts(rowid, text) VALUES (new.id, new.text);
+                        END""");
+                s.execute("""
+                        CREATE TRIGGER IF NOT EXISTS memories_fts_del AFTER DELETE ON memories BEGIN
+                          INSERT INTO memories_fts(memories_fts, rowid, text) VALUES ('delete', old.id, old.text);
+                        END""");
+                s.execute("""
+                        CREATE TRIGGER IF NOT EXISTS memories_fts_upd AFTER UPDATE OF text ON memories BEGIN
+                          INSERT INTO memories_fts(memories_fts, rowid, text) VALUES ('delete', old.id, old.text);
+                          INSERT INTO memories_fts(rowid, text) VALUES (new.id, new.text);
+                        END""");
+                s.execute("""
+                        CREATE TABLE IF NOT EXISTS villager_relations (
+                          a TEXT, b TEXT, affinity INTEGER DEFAULT 0, familiarity INTEGER DEFAULT 0, kind TEXT,
+                          last_interaction INTEGER, PRIMARY KEY (a, b))""");
+            }
             s.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', '" + SCHEMA_VERSION + "')");
         }
+    }
+
+    private static void addColumn(Statement s, String table, String column, String type) throws SQLException {
+        try (ResultSet rs = s.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (column.equals(rs.getString("name"))) {
+                    return;
+                }
+            }
+        }
+        s.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
     }
 
     public <T> CompletableFuture<T> call(Work<T> work) {
