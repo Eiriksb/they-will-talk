@@ -136,6 +136,26 @@ public final class TwtApi implements TheyWillTalkApi {
     }
 
     @Override
+    public boolean talk(Entity villager, ServerPlayer player, String text) {
+        TheyWillTalk mod = TheyWillTalk.get();
+        if (mod == null || mod.conversationManager() == null || !llm.ready() || !canTalk(villager) || text == null || text.isBlank()) {
+            return false;
+        }
+        mod.conversationManager().talk(villager, player, text.strip(), dev.eiriksb.theywilltalk.conversation.ConversationManager.Channel.TEXT,
+                null, "en");
+        return true;
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<java.util.List<dev.eiriksb.theywilltalk.api.ChatLine>> history(UUID villager, UUID player, int limit) {
+        TheyWillTalk mod = TheyWillTalk.get();
+        if (mod == null || mod.store() == null) {
+            return java.util.concurrent.CompletableFuture.completedFuture(java.util.List.of());
+        }
+        return mod.store().history(villager, player, limit);
+    }
+
+    @Override
     public Optional<VillagerProfile> profile(UUID villager) {
         TheyWillTalk mod = TheyWillTalk.get();
         return mod == null || mod.villagers() == null ? Optional.empty() : Optional.ofNullable(mod.villagers().cached(villager));

@@ -51,7 +51,10 @@ public final class SpeechRenderer {
     }
 
     public static String designOf(VillagerProfile p, VillagerFacts f) {
-        return p.voiceDesign() != null && !p.voiceDesign().isBlank() ? p.voiceDesign() : VoiceDesign.base(p, f);
+        if (p.voiceDesign() != null && !p.voiceDesign().isBlank()) {
+            return p.voiceDesign();
+        }
+        return f != null && f.voiceDesign != null && !f.voiceDesign.isBlank() ? f.voiceDesign : VoiceDesign.base(p, f);
     }
 
     public static long seedOf(VillagerProfile p) {
@@ -115,7 +118,8 @@ public final class SpeechRenderer {
                 TheyWillTalk.LOGGER.debug("Qwen3-TTS failed, falling back to the voice server: {}", e.toString());
             }
         }
-        Prosody prosody = Prosody.forLine(p.pitch(), p.speed(), emotion, f.moodLevel);
+        Prosody prosody = Prosody.forLine(f.voicePitch != null ? f.voicePitch : p.pitch(), f.voiceSpeed != null ? f.voiceSpeed : p.speed(),
+                emotion, f.moodLevel);
         TtsClient.Speech speech = voiceServer.synthesize(text, p.voice(), prosody.ttsSpeed());
         short[] pcm = prosody.render(speech.pcm(), speech.sampleRate());
         if (firstLine && prosody.leadInMs() > 0) {

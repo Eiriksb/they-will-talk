@@ -149,7 +149,9 @@ Other mods can make their own entities talk and add to conversations through `de
 (start at `TheyWillTalkApi.get()`):
 
 * `registerKind` / `registerAdapter`: a new kind of villager and the adapter that reads it (`VillagerAdapter`,
-  filling `VillagerFacts`; set `facts.role` to describe who they are).
+  filling `VillagerFacts`; set `facts.role` to describe who they are, and `facts.voiceDesign` (with `voicePitch` and
+  `voiceSpeed`) to give them a voice of your own; keep it the same from turn to turn, since a new description makes a
+  new voice).
 * `addPromptContributor`: lines about what's going on, added to every turn's prompt.
 * `addConversationHook`: runs before each reply to a player (add context, or take the turn over) and after it.
 * `memory()`: villagers' memories (about players, each other, places, anything: with importance and where they heard
@@ -158,6 +160,8 @@ Other mods can make their own entities talk and add to conversations through `de
 * `llm()`: the language model for other mods' own calls (JSON or text), sharing TWT's queue so players go first.
 * `speak`: a villager says something to a player on their own initiative, in their own words and voice.
 * `profile`: who a villager is (personality, quirk, backstory).
+* `talk`: a player says something to a particular villager (for a mod's own chat screen); `history`: what a villager
+  and a player have said to each other.
 * `TwtReadyEvent` on the game bus once a world is loaded and TWT is running.
 
 Only that package and `VillagerAdapter`, `VillagerFacts`, `VillagerKind` and `VillagerProfile` are API; the rest may

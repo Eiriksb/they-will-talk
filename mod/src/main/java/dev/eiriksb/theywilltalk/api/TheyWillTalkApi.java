@@ -24,9 +24,10 @@ import java.util.function.BooleanSupplier;
 public interface TheyWillTalkApi {
     /**
      * 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. 3: {@link #memory}, reflection
-     * fields. 4: {@link #llm}, {@link #speak}, {@link #profile}.
+     * fields. 4: {@link #llm}, {@link #speak}, {@link #profile}. 5: {@link #talk}, {@link #history}, and voice designs from
+     * adapters ({@code VillagerFacts.voiceDesign}, {@code voicePitch}, {@code voiceSpeed}).
      */
-    int VERSION = 4;
+    int VERSION = 5;
 
     static TheyWillTalkApi get() {
         return TwtApi.INSTANCE;
@@ -74,4 +75,15 @@ public interface TheyWillTalkApi {
 
     /** Who a villager is (name, personality, quirk, backstory), once TWT has met them. */
     Optional<VillagerProfile> profile(UUID villager);
+
+    /**
+     * A player says something to a particular villager, as if typed in chat while looking at them (for a mod's own
+     * chat screen). The reply comes as usual: in chat, spoken, and to the conversation hooks. Server thread.
+     *
+     * @return false when the villager can't talk right now (unknown, switched off, or the model isn't running)
+     */
+    boolean talk(Entity villager, ServerPlayer player, String text);
+
+    /** The last {@code limit} lines between a villager and a player, oldest first. */
+    java.util.concurrent.CompletableFuture<java.util.List<ChatLine>> history(UUID villager, UUID player, int limit);
 }

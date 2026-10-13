@@ -344,6 +344,18 @@ public final class Store {
         db.exec("UPDATE conversations SET ended=?, turns=turns+1 WHERE id=?", now, conversationId);
     }
 
+    /** The last {@code limit} lines between a villager and a player, oldest first. */
+    public CompletableFuture<java.util.List<dev.eiriksb.theywilltalk.api.ChatLine>> history(UUID villager, UUID player, int limit) {
+        return db.query("SELECT ts, role, speaker, text, emotion FROM messages WHERE villager_uuid=? AND player_uuid=? ORDER BY ts DESC, id DESC LIMIT ?",
+                rs -> new dev.eiriksb.theywilltalk.api.ChatLine(rs.getLong(1), !"villager".equals(rs.getString(2)), rs.getString(3),
+                        rs.getString(4), "villager".equals(rs.getString(2)) ? rs.getString(5) : null), villager, player, limit)
+                .thenApply(l -> {
+                    java.util.List<dev.eiriksb.theywilltalk.api.ChatLine> out = new java.util.ArrayList<>(l);
+                    java.util.Collections.reverse(out);
+                    return out;
+                });
+    }
+
     public void event(String type, UUID villager, UUID player, String text) {
         db.exec("INSERT INTO events (ts, type, villager_uuid, player_uuid, text) VALUES (?,?,?,?,?)",
                 System.currentTimeMillis(), type, villager, player, text);

@@ -47,6 +47,15 @@ public final class VillagerFacts {
      * ..."). Used when the villager is first met; null lets TWT pick one of its village stories.
      */
     public String backstory;
+    /**
+     * The villager's own voice, for kinds TWT doesn't know: a Qwen3-TTS voice description ("A young woman with a
+     * low, husky voice; speaks slowly..."). Keep it the same from turn to turn: a changed description makes a new voice.
+     * A description written in the dashboard still wins. Null: TWT makes one up.
+     */
+    public String voiceDesign;
+    /** The voice's pitch and speed (about 0.85 to 1.15; 1 is normal), for the non-designed voices; null: the profile's. */
+    public Double voicePitch;
+    public Double voiceSpeed;
     /** Lines about what's going on right now, for the prompt (added by adapters, prompt contributors and hooks). */
     public final List<String> context = new ArrayList<>();
     public String dimension;

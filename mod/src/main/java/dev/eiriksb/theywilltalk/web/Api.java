@@ -334,7 +334,13 @@ final class Api {
         v.addProperty("loaded", onServer(() -> mod().findEntity(id) != null).get(2, TimeUnit.SECONDS));
         VillagerProfile prof = mod().villagers().cached(id);
         if (prof != null) {
-            v.addProperty("generatedVoiceDesign", dev.eiriksb.theywilltalk.villager.VoiceDesign.base(prof, voiceFacts(v, prof)));
+            // the voice their mod gives them, when they're loaded and it gives one; else TWT's own
+            dev.eiriksb.theywilltalk.villager.VillagerFacts live = onServer(() -> {
+                var e = mod().findEntity(id);
+                return e == null ? null : mod().villagers().facts(e, null);
+            }).get(2, TimeUnit.SECONDS);
+            v.addProperty("generatedVoiceDesign", live != null && live.voiceDesign != null && !live.voiceDesign.isBlank() ? live.voiceDesign
+                    : dev.eiriksb.theywilltalk.villager.VoiceDesign.base(prof, voiceFacts(v, prof)));
         }
         v.addProperty("expressiveVoices", mod().speech().expressive());
         v.addProperty("voiceCloning", mod().speech().cloning());
