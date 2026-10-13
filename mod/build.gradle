@@ -125,6 +125,7 @@ dependencies {
 
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testImplementation 'com.google.code.gson:gson:2.10.1' // Minecraft's version; the plain unit tests don't see the game's libraries
+    testImplementation 'org.slf4j:slf4j-api:2.0.9' // likewise: the logger, which prints nothing without a backend
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

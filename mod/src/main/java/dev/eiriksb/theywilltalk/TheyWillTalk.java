@@ -68,6 +68,7 @@ public final class TheyWillTalk {
     private Database database;
     private Store store;
     private LlmClient llm;
+    private LlmClient planner;
     private TtsClient tts;
     private QwenTtsClient qwenTts;
     private SpeechRenderer speech;
@@ -85,6 +86,12 @@ public final class TheyWillTalk {
     public TheyWillTalk(IEventBus modBus, ModContainer container) {
         instance = this;
         container.registerConfig(ModConfig.Type.COMMON, TwtConfig.SPEC);
+        dev.eiriksb.theywilltalk.lend.LendNet.register(modBus);
+        dev.eiriksb.theywilltalk.lend.LendServer.register();
+        if (net.neoforged.fml.loading.FMLEnvironment.dist.isClient()) {
+            container.registerConfig(ModConfig.Type.CLIENT, TwtClientConfig.SPEC);
+            dev.eiriksb.theywilltalk.lend.LendClient.register();
+        }
         NeoForge.EVENT_BUS.addListener(this::onServerStarted);
         NeoForge.EVENT_BUS.addListener(this::onServerStopping);
         NeoForge.EVENT_BUS.addListener(this::onServerTick);
@@ -150,6 +157,7 @@ public final class TheyWillTalk {
         store = new Store(database);
         runtime = new RuntimeManager(gameDir);
         llm = new LlmClient(() -> runtime.llmBaseUrl(), TwtConfig.PARALLEL_SLOTS.get());
+        planner = new LlmClient(() -> runtime.plannerBaseUrl(), () -> runtime.plannerReady(), 1);
         tts = new TtsClient(() -> runtime.voiceReady() ? runtime.voiceBaseUrl() : null);
         qwenTts = new QwenTtsClient(() -> runtime.qwenTtsBaseUrl());
         QwenTtsClient qwenClone = new QwenTtsClient(() -> runtime.qwenCloneBaseUrl());
@@ -192,6 +200,9 @@ public final class TheyWillTalk {
         events = null;
         if (llm != null) {
             llm.shutdown();
+        }
+        if (planner != null) {
+            planner.shutdown();
         }
         if (runtime != null) {
             runtime.stop();
@@ -346,6 +357,11 @@ public final class TheyWillTalk {
 
     public LlmClient llm() {
         return llm;
+    }
+
+    /** The planner model's queue (the brain's model when no planner model is set). */
+    public LlmClient planner() {
+        return planner;
     }
 
     public TtsClient tts() {

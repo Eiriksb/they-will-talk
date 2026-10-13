@@ -18,6 +18,10 @@ public final class TwtConfig {
     public static final ModConfigSpec.IntValue TTS_THREADS;
     public static final ModConfigSpec.IntValue PROCESS_NICE;
     public static final ModConfigSpec.ConfigValue<String> EXTERNAL_LLM_URL;
+    public static final ModConfigSpec.ConfigValue<String> PLANNER_MODEL;
+    public static final ModConfigSpec.ConfigValue<String> PLANNER_URL;
+    public static final ModConfigSpec.IntValue PLANNER_IDLE_MINUTES;
+    public static final ModConfigSpec.BooleanValue LENT_GPUS;
 
     // conversation
     public static final ModConfigSpec.DoubleValue LISTEN_RADIUS;
@@ -97,6 +101,18 @@ public final class TwtConfig {
         EXTERNAL_LLM_URL = b.comment("Advanced: use an already running OpenAI-compatible server instead of the bundled one",
                         "(e.g. http://127.0.0.1:8080). Empty = use the bundled llama-server.")
                 .define("externalLlmUrl", "");
+        PLANNER_MODEL = b.comment("A second, bigger language model for planning (building designs from Stad and other mods): its GGUF file",
+                        "name inside runtime/models/llm. Empty = the villager brain plans too. It starts when a plan is first needed",
+                        "and stops when idle, so it only takes GPU memory while someone is planning.")
+                .define("plannerModel", "");
+        PLANNER_URL = b.comment("Advanced: an already running OpenAI-compatible server for planning instead (e.g. http://127.0.0.1:8081).")
+                .define("plannerUrl", "");
+        PLANNER_IDLE_MINUTES = b.comment("Minutes the planner model may sit idle before it's stopped to free GPU memory.")
+                .defineInRange("plannerIdleMinutes", 10, 1, 1440);
+        LENT_GPUS = b.comment("Players with They Will Talk on their own computer may lend their GPU (the /lendgpu command). Their own",
+                        "conversations with villagers then think on it - only theirs, since the prompts hold what villagers remember",
+                        "about them. Useful when this server has no GPU, or a busy one.")
+                .define("lentGpus", true);
         b.pop();
 
         b.comment("How players talk to villagers.").push("conversation");

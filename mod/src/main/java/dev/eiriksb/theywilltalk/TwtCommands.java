@@ -262,7 +262,14 @@ final class TwtCommands {
         CommandSourceStack s = ctx.getSource();
         s.sendSuccess(() -> Component.literal("They Will Talk").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD), false);
         s.sendSuccess(() -> line("LLM", rt.llmProcess(), rt.llmReady(), rt.llmModelName()), false);
+        if (rt.plannerSeparate()) {
+            s.sendSuccess(() -> line("Planner", rt.plannerProcess(), rt.plannerProcess().state() == dev.eiriksb.theywilltalk.runtime.ManagedProcess.State.READY,
+                    rt.plannerModelName() + " (starts when needed)"), false);
+        }
         s.sendSuccess(() -> line("Voice", rt.voiceProcess(), rt.voiceReady(), mod.tts().voices().size() + " voices"), false);
+        if (!mod.llm().lenders().isEmpty()) {
+            s.sendSuccess(() -> Component.literal("Lent GPUs: " + String.join(", ", mod.llm().lenders())).withStyle(ChatFormatting.GRAY), false);
+        }
         for (GpuInfo.Gpu g : GpuInfo.query()) {
             s.sendSuccess(() -> Component.literal(String.format("GPU: %s, %d/%d MB VRAM, %d%% busy, %d°C", g.name(), g.memoryUsedMb(),
                     g.memoryTotalMb(), g.utilization(), g.temperature())).withStyle(ChatFormatting.GRAY), false);

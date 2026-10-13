@@ -195,6 +195,10 @@ final class Api {
         o.addProperty("llmReady", rt.llmReady());
         o.addProperty("voiceReady", rt.voiceReady());
         o.addProperty("model", rt.llmModelName());
+        o.addProperty("planner", rt.plannerModelName());
+        JsonArray lenders = new JsonArray();
+        mod().llm().lenders().forEach(lenders::add);
+        o.add("lenders", lenders);
         o.addProperty("voices", mod().tts().voices().size());
         o.addProperty("expressiveVoices", mod().speech().expressive());
         o.addProperty("qwenTtsReady", rt.qwenTtsReady());
@@ -718,14 +722,14 @@ final class Api {
         RuntimeManager rt = mod().runtime();
         o.addProperty("runtimeDir", String.valueOf(rt.runtimeDir()));
         JsonArray procs = new JsonArray();
-        for (ManagedProcess p : new ManagedProcess[]{rt.llmProcess(), rt.qwenTtsProcess(), rt.qwenCloneProcess(), rt.voiceProcess()}) {
+        for (ManagedProcess p : new ManagedProcess[]{rt.llmProcess(), rt.plannerProcess(), rt.qwenTtsProcess(), rt.qwenCloneProcess(), rt.voiceProcess()}) {
             if (p == null) {
                 continue;
             }
             JsonObject j = new JsonObject();
             j.addProperty("name", p.name());
             j.addProperty("state", p.state().name());
-            j.addProperty("onDemand", p == rt.qwenTtsProcess() && rt.designerOnDemand());
+            j.addProperty("onDemand", p == rt.qwenTtsProcess() && rt.designerOnDemand() || p == rt.plannerProcess() && rt.plannerSeparate());
             j.addProperty("pid", p.pid());
             j.addProperty("uptimeMs", p.uptimeMs());
             j.addProperty("lastError", p.lastError());
@@ -738,6 +742,11 @@ final class Api {
         o.add("processes", procs);
         o.addProperty("requests", mod().llm().requests.get());
         o.addProperty("tokensGenerated", mod().llm().tokensGenerated.get());
+        o.addProperty("planner", rt.plannerModelName());
+        o.addProperty("lentRequests", mod().llm().lentRequests.get());
+        JsonArray lenders = new JsonArray();
+        mod().llm().lenders().forEach(lenders::add);
+        o.add("lenders", lenders);
         JsonObject cfg = new JsonObject();
         cfg.addProperty("llmModel", TwtConfig.LLM_MODEL.get());
         cfg.addProperty("gpuLayers", TwtConfig.GPU_LAYERS.get());
@@ -773,6 +782,7 @@ final class Api {
                     case "cancel" -> rt.installer().cancel(id);
                     case "remove" -> rt.remove(id);
                     case "use" -> rt.use(id);
+                    case "planner" -> rt.usePlanner(id);
                     case "settings" -> {
                         if (body.has("crudeLanguage")) {
                             TwtConfig.CRUDE_LANGUAGE.set(body.get("crudeLanguage").getAsBoolean());

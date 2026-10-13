@@ -1089,9 +1089,10 @@
     const voices = await api('/voices').catch(() => []);
     const gpu = (r.gpus || [])[0];
     const procCard = (p) => h('section', { class: 'card' },
-      h('header', null, h('h2', null, { llm: 'Villager brain (llama.cpp)', 'qwen-tts': 'Expressive voices (Qwen3-TTS)', 'qwen-clone': 'Voice cloning (Qwen3-TTS Base)' }[p.name] || 'CPU voices (Kokoro)'),
+      h('header', null, h('h2', null, { llm: 'Villager brain (llama.cpp)', planner: 'Planner model (llama.cpp)', 'qwen-tts': 'Expressive voices (Qwen3-TTS)', 'qwen-clone': 'Voice cloning (Qwen3-TTS Base)' }[p.name] || 'CPU voices (Kokoro)'),
         p.onDemand && p.state === 'STOPPED'
-          ? h('span', { class: 'pill', title: 'Starts by itself while a new villager voice is designed, then stops to free GPU memory' }, h('span', { class: 'dot' }), 'idle · on demand')
+          ? h('span', { class: 'pill', title: p.name === 'planner' ? 'Starts by itself when a plan is needed (a building design), then stops to free GPU memory'
+            : 'Starts by itself while a new villager voice is designed, then stops to free GPU memory' }, h('span', { class: 'dot' }), 'idle · on demand')
           : h('span', { class: 'pill ' + (p.state === 'READY' ? 'ok' : p.state === 'FAILED' ? 'bad' : 'warn') }, h('span', { class: 'dot' }), p.state.toLowerCase())),
       h('div', { class: 'body stack', style: { gap: '10px' } },
         h('dl', { class: 'kv' }, h('dt', null, 'PID'), h('dd', { class: 'num' }, p.pid > 0 ? p.pid : '–'),
@@ -1127,13 +1128,14 @@
     main.replaceChildren(h('div', { class: 'stack' },
       (r.problems || []).map(p => h('div', { class: 'banner bad' }, p)),
       h('div', { class: 'grid g-4' },
-        h('div', { class: 'card stat' }, h('div', { class: 'label' }, 'Model'), h('div', { class: 'value', style: { fontSize: '16px', overflowWrap: 'anywhere' } }, r.model || '–'), h('div', { class: 'sub' }, `${fmt.format(r.requests)} requests · ${fmt.format(r.tokensGenerated)} tokens`)),
+        h('div', { class: 'card stat' }, h('div', { class: 'label' }, 'Model'), h('div', { class: 'value', style: { fontSize: '16px', overflowWrap: 'anywhere' } }, r.model || '–'), h('div', { class: 'sub' }, `${fmt.format(r.requests)} requests · ${fmt.format(r.tokensGenerated)} tokens` + (r.planner ? ` · plans: ${r.planner}` : ''))),
         h('div', { class: 'card stat' }, h('div', { class: 'label' }, 'Speed'), h('div', { class: 'value num' }, (r.tokensPerSecond || '–') + ' tok/s'), h('div', { class: 'sub' }, `first token ${r.firstTokenMs > 0 ? r.firstTokenMs + ' ms' : '–'} · queue ${r.queued}`)),
         h('div', { class: 'card stat' }, h('div', { class: 'label' }, 'Time to voice'), h('div', { class: 'value num' }, r.lastLatencyMs ? fmt.format(r.lastLatencyMs) + ' ms' : '–'), h('div', { class: 'sub' }, `${r.activeConversations} talking now`)),
         h('div', { class: 'card stat' }, h('div', { class: 'label' }, 'GPU'), h('div', { class: 'value num' }, gpu ? `${gpu.utilization}%` : '–'),
           gpu ? h('div', { class: 'stack', style: { gap: '4px', marginTop: '4px' } }, h('div', { class: 'meter' }, h('i', { style: { width: (100 * gpu.memoryUsedMb / gpu.memoryTotalMb) + '%' } })),
             h('div', { class: 'sub' }, `${(gpu.memoryUsedMb / 1024).toFixed(1)} / ${(gpu.memoryTotalMb / 1024).toFixed(1)} GB · ${gpu.temperature}°C · ${gpu.name}`)) : h('div', { class: 'sub' }, 'no NVIDIA GPU detected'))),
-      h('div', { class: 'grid g-3' }, (r.processes || []).map(procCard)),
+      h('div', { class: 'grid g-3' }, (r.processes || []).filter(p => p.name !== 'planner' || p.onDemand || p.state !== 'STOPPED').map(procCard)),
+      (r.lenders || []).length ? h('div', { class: 'banner' }, 'Players lending their GPU: ' + r.lenders.join(', ') + `. Their conversations think on their own computers (${fmt.format(r.lentRequests || 0)} answered so far).`) : null,
       h('div', { class: 'grid g-main' },
         h('section', { class: 'card' }, h('header', null, h('h2', null, 'Voice lab'), h('span', { class: 'muted' }, `${voices.length} voices`)),
           h('div', { class: 'body stack' },
@@ -1220,12 +1222,20 @@
       if (p.installed && p.selectable && !p.active) {
         actions.push(h('button', { class: 'btn primary', onclick: () => act('use', { id: p.id }, uncensored ? UNCENSORED_WARNING : null) }, 'Use this'));
       }
+      if (p.installed && p.group === 'brain' && !p.active && !p.planner) {
+        actions.push(h('button', { class: 'btn', title: 'A bigger model can make better building plans while the villagers chat on the fast one. It only runs while planning.',
+          onclick: () => act('planner', { id: p.id }) }, 'Use for planning'));
+      }
+      if (p.planner) {
+        actions.push(h('button', { class: 'btn', onclick: () => act('planner', { id: '' }) }, 'Stop planning with it'));
+      }
       if (p.installed && !running) {
         actions.push(h('button', { class: 'btn danger', onclick: () => act('remove', { id: p.id }, `Delete ${p.name} from the server? You can download it again later.`) }, 'Remove'));
       }
       return h('section', { class: 'card' },
         h('header', null, h('h2', null, p.name),
           p.active ? h('span', { class: 'pill ok' }, h('span', { class: 'dot' }), 'In use')
+            : p.planner ? h('span', { class: 'pill ok' }, h('span', { class: 'dot' }), 'Plans')
             : p.installed ? h('span', { class: 'pill' }, h('span', { class: 'dot' }), 'Installed') : null),
         h('div', { class: 'body stack', style: { gap: '10px' } },
           (p.recommended || uncensored || p.wrongGpu ? h('div', { class: 'row' }, p.recommended ? h('span', { class: 'tag' }, 'Recommended') : null,
@@ -1274,7 +1284,7 @@
                 'Turn off to let villagers swear uncensored. Slurs are always censored.'))),
           h('label', { class: 'field' }, 'Voice engine', engine)));
 
-      root.replaceChildren(setup,
+      root.replaceChildren(setup || "",
         ...group('Villager brain', 'The language model villagers think with. Bigger is smarter but slower and needs more GPU memory.', 'brain'),
         ...group('Voices', 'How villagers sound. Kokoro runs on the CPU; Qwen3-TTS acts out emotions on the GPU.', 'voices'),
         ...group('Programs', 'What runs the models. Installed automatically with the first brain or voice that needs them.', 'programs'),

@@ -36,11 +36,44 @@ public final class TwtApi implements TheyWillTalkApi {
     private final List<ConversationHook> hooks = new CopyOnWriteArrayList<>();
     private final List<ReflectionField> reflectionFields = new CopyOnWriteArrayList<>();
     private final MemoryApi memory = new TwtMemoryApi();
-    private final LlmApi llm = new LlmApi() {
+    private final LlmApi llm = new LlmView(false, null);
+
+    /** {@link LlmApi} on the chat or planner model, for requests about one player (their lent GPU) or nobody in particular. */
+    private record LlmView(boolean onPlanner, UUID about) implements LlmApi {
+        private static LlmClient client(boolean planner) {
+            TheyWillTalk mod = TheyWillTalk.get();
+            if (mod == null || mod.runtime() == null) {
+                return null;
+            }
+            return planner && mod.runtime().plannerSeparate() ? mod.planner() : mod.llm();
+        }
+
         @Override
         public boolean ready() {
-            TheyWillTalk mod = TheyWillTalk.get();
-            return mod != null && mod.runtime() != null && mod.llm() != null && mod.runtime().llmReady();
+            LlmClient c = client(onPlanner);
+            return c != null && (about == null ? c.ready() : c.readyFor(about));
+        }
+
+        @Override
+        public boolean readyFor(UUID player) {
+            LlmClient c = client(onPlanner);
+            return c != null && c.readyFor(player);
+        }
+
+        @Override
+        public LlmApi forPlayer(UUID player) {
+            return new LlmView(onPlanner, player);
+        }
+
+        @Override
+        public LlmApi planner() {
+            return new LlmView(true, about);
+        }
+
+        @Override
+        public int backlog() {
+            LlmClient c = client(onPlanner);
+            return c == null ? 0 : c.queued();
         }
 
         private CompletableFuture<String> call(String system, String user, JsonObject schema, int maxTokens, Priority priority) {
@@ -52,8 +85,8 @@ public final class TwtApi implements TheyWillTalkApi {
                 case PLANNING -> LlmClient.Priority.PLANNING;
                 case BACKGROUND -> LlmClient.Priority.AMBIENT;
             };
-            return TheyWillTalk.get().llm().chat(p, List.of(LlmClient.Message.system(system), LlmClient.Message.user(user)),
-                    schema == null ? 0.8 : 0.4, maxTokens, schema, null).thenApply(LlmClient.Result::text);
+            return client(onPlanner).chat(p, List.of(LlmClient.Message.system(system), LlmClient.Message.user(user)),
+                    schema == null ? 0.8 : 0.4, maxTokens, schema, null, about).thenApply(LlmClient.Result::text);
         }
 
         @Override
@@ -65,7 +98,7 @@ public final class TwtApi implements TheyWillTalkApi {
         public CompletableFuture<String> text(String system, String user, int maxTokens, Priority priority) {
             return call(system, user, null, maxTokens, priority);
         }
-    };
+    }
 
     private TwtApi() {}
 
@@ -129,7 +162,7 @@ public final class TwtApi implements TheyWillTalkApi {
     @Override
     public boolean speak(Entity villager, ServerPlayer player, String instruction) {
         TheyWillTalk mod = TheyWillTalk.get();
-        if (mod == null || mod.conversationManager() == null || !llm.ready() || !canTalk(villager)) {
+        if (mod == null || mod.conversationManager() == null || !llm.readyFor(player.getUUID()) || !canTalk(villager)) {
             return false;
         }
         return mod.conversationManager().event(villager, player, instruction, null);
@@ -138,7 +171,7 @@ public final class TwtApi implements TheyWillTalkApi {
     @Override
     public boolean talk(Entity villager, ServerPlayer player, String text) {
         TheyWillTalk mod = TheyWillTalk.get();
-        if (mod == null || mod.conversationManager() == null || !llm.ready() || !canTalk(villager) || text == null || text.isBlank()) {
+        if (mod == null || mod.conversationManager() == null || !llm.readyFor(player.getUUID()) || !canTalk(villager) || text == null || text.isBlank()) {
             return false;
         }
         mod.conversationManager().talk(villager, player, text.strip(), dev.eiriksb.theywilltalk.conversation.ConversationManager.Channel.TEXT,

@@ -27,7 +27,7 @@ public interface TheyWillTalkApi {
      * fields. 4: {@link #llm}, {@link #speak}, {@link #profile}. 5: {@link #talk}, {@link #history}, and voice designs from
      * adapters ({@code VillagerFacts.voiceDesign}, {@code voicePitch}, {@code voiceSpeed}).
      */
-    int VERSION = 5;
+    int VERSION = 6;
 
     static TheyWillTalkApi get() {
         return TwtApi.INSTANCE;

@@ -20,11 +20,11 @@ import java.util.stream.Collectors;
 /** The dashboard's Settings page: every option in config/theywilltalk-common.toml, read from the config spec. */
 final class Settings {
     /** Options the dashboard only shows: changing them could lock the admin out or point the server at other folders or hosts. */
-    private static final Set<String> READ_ONLY = Set.of("runtime.runtimeDir", "runtime.externalLlmUrl", "dashboard.enabled",
+    private static final Set<String> READ_ONLY = Set.of("runtime.runtimeDir", "runtime.externalLlmUrl", "runtime.plannerUrl", "dashboard.enabled",
             "dashboard.bindAddress", "dashboard.port", "dashboard.bluemapUrl");
     /** Options the AI programs read when they start. */
     private static final Set<String> AI_RESTART = Set.of("runtime.llmModel", "runtime.gpuLayers", "runtime.contextSize",
-            "runtime.parallelSlots", "runtime.qwenTtsModel", "runtime.ttsThreads", "runtime.processNice");
+            "runtime.parallelSlots", "runtime.plannerModel", "runtime.qwenTtsModel", "runtime.ttsThreads", "runtime.processNice");
     /** Words written differently from plain lower case in labels. */
     private static final Map<String, String> WORDS = Map.of("llm", "LLM", "tts", "TTS", "gpu", "GPU", "url", "URL", "mca", "MCA",
             "bluemap", "BlueMap", "minecolonies", "MineColonies", "sipher", "Sipher", "qwen", "Qwen");

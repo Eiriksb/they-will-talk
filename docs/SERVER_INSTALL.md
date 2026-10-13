@@ -10,7 +10,7 @@ the internet. The AI programs and models are downloaded once, when you click *In
 | | |
 |---|---|
 | Minecraft / loader | 1.21.1, NeoForge 21.1.227 or newer |
-| GPU | NVIDIA, 8 GB VRAM or more (RTX 3060 / 4060 Ti or better): the AI uses about 4.5 GB, and 7 GB for a minute while it designs a new villager's voice. AMD and Intel GPUs work too (through Vulkan), with the Kokoro voices instead of the expressive Qwen3-TTS ones. Without a GPU the brain runs on the CPU: it works, but villagers take several seconds to answer. |
+| GPU | NVIDIA, 8 GB VRAM or more (RTX 3060 / 4060 Ti or better): the AI uses about 4.5 GB, and 7 GB for a minute while it designs a new villager's voice. AMD and Intel GPUs work too (through Vulkan), with the Kokoro voices instead of the expressive Qwen3-TTS ones. Without a GPU the brain runs on the CPU: it works, but villagers take several seconds to answer. Or let players lend their GPUs (below). |
 | GPU driver | NVIDIA: 570 or newer on Linux (any recent driver on Windows). AMD/Intel: a Vulkan driver (Mesa on Linux, the normal driver on Windows) |
 | RAM / disk | about 2 GB extra RAM, 4-10 GB disk depending on the models you pick |
 | CPU | the fallback voice engine and the helper processes run at lower priority than the Minecraft server |
@@ -70,6 +70,10 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
 * Use **push-to-talk** or headphones: with open speakers and voice activation, the microphone can pick up villager
   voices (They Will Talk filters these echoes, but push-to-talk is nicer).
 * No mic? Type in chat while looking at a villager, or use `/twt talk <message>`.
+* Got a GPU? With They Will Talk installed on your own computer (and its AI installed: open a singleplayer world and
+  click *Install recommended* on the dashboard's Models page), `/lendgpu on` lends it to the server: the villagers you
+  talk to think on your computer, so they answer faster on a busy server, or at all on one without a GPU. Only your own
+  conversations are sent to it. `/lendgpu off` stops it; it stays on for the next server you join until you do.
 * Talk to villagers in a group: others standing with you listen in, and now and then speak up (when they're mentioned,
   when it's about their family, or when they just can't help it). Look at one or say their name to talk to them; ask
   "what do you all think?" to hear from everyone.
@@ -109,6 +113,7 @@ instructions. The **Settings** page changes the mod's settings (below) without e
 | `/twt hear <player> <message>` | op | pretend a player said something by voice |
 | `/twt relay <player> <lang> <text>` | op | push a line through Sipher's caption relay (testing without a mic) |
 | `/twt restart` | op | restart the AI processes |
+| `/lendgpu [on\|off]` | players with the mod | lend your GPU to the server you're on (a client command) |
 
 ## Configuration (`config/theywilltalk-common.toml`)
 
@@ -121,6 +126,10 @@ dashboard's own address, port and BlueMap URL, which are only in the file. The m
 * `groupConversations`, `groupSize` - other villagers joining a conversation.
 * `externalLlmUrl` - use your own OpenAI-compatible server (llama.cpp, Ollama, LM Studio...) instead of the built-in
   one.
+* `plannerModel`, `plannerIdleMinutes` - a second, bigger model for planning (Stad's building designs), started when a
+  plan is needed and stopped when idle; *Use for planning* on the Models page sets it. `plannerUrl` points planning at
+  your own server instead.
+* `lentGpus` - whether players may lend their GPUs (`/lendgpu`).
 * `listenRadius`, `voiceDistance`, `requireLookOrName`, `activeConversationSeconds` - who hears what.
 * `maxReplyWords`, `maxRepliesPerMinute` - how chatty villagers are.
 * `ambientChatter`, `ambientIntervalSeconds`, `greetings` - villagers talking on their own.

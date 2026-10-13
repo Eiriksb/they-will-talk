@@ -91,6 +91,17 @@ Server admins: see [docs/SERVER_INSTALL.md](docs/SERVER_INSTALL.md).
   Intel GPUs, or the CPU) with the Kokoro voices. Admins pick the brain (Gemma 4 E2B/E4B, or their uncensored
   variants) and voice engine there, and can let villagers swear (*crude language*, off by default). Archives are
   unpacked by the voice server jar (`Unpack`), which ships inside the mod.
+* **A planner model.** Other mods' planning (Stad's building designs) can use a second, bigger language model while
+  villagers chat on the small, fast one: *Use for planning* on the Models page (or `plannerModel`). It starts when a
+  plan is asked for and stops after `plannerIdleMinutes` idle, so it only takes GPU memory while someone is planning.
+* **Lending a GPU.** Players who have They Will Talk installed on their own computer can lend their GPU to a server
+  with `/lendgpu on` (or `lendGpu` in `config/theywilltalk-client.toml`). Their client starts the language model
+  installed there (the same one singleplayer uses), and the server sends it that player's own conversations, and only
+  those, since the prompts hold what villagers remember about them. Answers stream back over the mod's network
+  channel and are only ever text: a modified client can make a villager say odd things to its own player, nothing
+  more. When the lent GPU drops out, its requests go to the server's own model. A server without a GPU of its own
+  can run on lent ones: players who lend get answers, the rest are told the villager can't talk right now. Admins can
+  turn it off with `lentGpus`; the dashboard and `/twt status` show who's lending.
 * **Settings.** The dashboard's **Settings** page edits every option in `config/theywilltalk-common.toml` (except
   the ones that could lock the admin out, like the dashboard's address), saved as you change them.
 
@@ -158,6 +169,8 @@ Other mods can make their own entities talk and add to conversations through `de
   it), recall by what's being said, passing gossip on, and villager↔villager relations.
 * `addReflectionField`: an extra question in the reflection after each reply (no extra LLM call).
 * `llm()`: the language model for other mods' own calls (JSON or text), sharing TWT's queue so players go first.
+  `llm().planner()` is the planner model (the chat model when none is set), `llm().forPlayer(uuid)` marks requests
+  about one player so they can run on the GPU that player lends, and `backlog()` says how busy the model is.
 * `speak`: a villager says something to a player on their own initiative, in their own words and voice.
 * `profile`: who a villager is (personality, quirk, backstory).
 * `talk`: a player says something to a particular villager (for a mod's own chat screen); `history`: what a villager

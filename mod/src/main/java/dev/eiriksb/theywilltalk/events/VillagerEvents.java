@@ -175,9 +175,11 @@ public final class VillagerEvents implements ConversationManager.Hooks {
         if (ticks % 20 == 0) {
             checkErrands();
         }
-        if (ticks % 40 == 0 && llmReady.get()) {
+        if (ticks % 40 == 0) {
             for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-                maybeApproach(p);
+                if (llmReady.get() || llm.readyFor(p.getUUID())) {
+                    maybeApproach(p);
+                }
             }
         }
     }
@@ -546,7 +548,7 @@ public final class VillagerEvents implements ConversationManager.Hooks {
     /** Did the player just say yes or no to an offer? Asks the LLM (any language); acts on the server thread. */
     private void classify(Errand e, ServerPlayer p, String playerText) {
         llm.chat(LlmClient.Priority.CONVERSATION, PromptBuilder.answer(e.villagerName, e.playerName, e.request, e.task(), playerText),
-                0.0, 24, PromptBuilder.answerSchema(), null).thenAccept(r -> {
+                0.0, 24, PromptBuilder.answerSchema(), null, p.getUUID()).thenAccept(r -> {
             String answer;
             try {
                 answer = JsonParser.parseString(r.text()).getAsJsonObject().get("answer").getAsString();

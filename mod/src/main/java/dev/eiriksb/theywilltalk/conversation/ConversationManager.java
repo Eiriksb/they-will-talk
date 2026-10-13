@@ -185,7 +185,7 @@ public final class ConversationManager {
             }
             return false;
         }
-        if (!llmReady.get()) {
+        if (!llmReady.get() && !llm.readyFor(player.getUUID())) {
             player.displayClientMessage(Component.literal("The villagers' minds are still waking up... (AI starting)")
                     .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC), true);
             return true;
@@ -569,7 +569,7 @@ public final class ConversationManager {
                                 Thread.ofVirtual().start(() -> speech.prepare(profile, turn.facts, emotion));
                             }
                         }
-                    });
+                    }, turn.playerId);
             turn.llmFuture = future;
             LlmClient.Result result = future.get(90, TimeUnit.SECONDS);
             ss.finish();
@@ -604,7 +604,7 @@ public final class ConversationManager {
                 session.round = round;
                 chimeIn = llm.chat(LlmClient.Priority.GREETING, PromptBuilder.chimeIn(me, speaking, listening, turn.playerName, recent,
                                 toEveryone, decision.answerBack(), Languages.name(turn.replyLang)), 0.9, 220,
-                        PromptBuilder.chimeInSchema(names, names.size()), null);
+                        PromptBuilder.chimeInSchema(names, names.size()), null, turn.playerId);
             } else if (!scripted) {
                 session.turnsSinceChime++;
             }
@@ -1057,7 +1057,7 @@ public final class ConversationManager {
     private void reflect(Turn turn, TurnInfo info, List<PromptBuilder.Turn> exchange) {
         List<ReflectionField> fields = info == null ? List.of() : TwtApi.INSTANCE.reflectionFields(info);
         llm.chat(LlmClient.Priority.REFLECTION, PromptBuilder.reflection(turn.profile, turn.playerName, exchange, fields), 0.2,
-                180 + 60 * fields.size(), PromptBuilder.reflectionSchema(fields), null).thenAccept(result -> {
+                180 + 60 * fields.size(), PromptBuilder.reflectionSchema(fields), null, turn.playerId).thenAccept(result -> {
             try {
                 JsonObject o = JsonParser.parseString(result.text()).getAsJsonObject();
                 int delta = Math.max(-5, Math.min(5, o.get("affinity_delta").getAsInt()));

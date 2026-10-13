@@ -51,6 +51,7 @@ public final class RuntimeManager {
     private final ManagedProcess qwen;
     private final ManagedProcess qwenClone;
     private final ManagedProcess voice;
+    private final ManagedProcess planner;
 
     private volatile String llmModelFile;
     private volatile String qwenModelFile;
@@ -58,6 +59,8 @@ public final class RuntimeManager {
     private volatile int qwenPort;
     private volatile int qwenClonePort;
     private volatile int voicePort;
+    private volatile int plannerPort;
+    private volatile long plannerUsedAt;
     private volatile String externalLlm;
     private volatile boolean externalReady;
     private volatile boolean running;
@@ -69,6 +72,7 @@ public final class RuntimeManager {
         this.qwen = new ManagedProcess("qwen-tts", logs.resolve("qwen-tts.log"));
         this.qwenClone = new ManagedProcess("qwen-clone", logs.resolve("qwen-clone.log"));
         this.voice = new ManagedProcess("voice", logs.resolve("voice.log"));
+        this.planner = new ManagedProcess("planner", logs.resolve("planner.log"));
         this.installer = new Installer(runtimeDir, platform, catalog, this::voiceServerJar, RuntimeManager::nvidia, this::installed);
     }
 
@@ -95,6 +99,13 @@ public final class RuntimeManager {
         startVoice();
     }
 
+    /** Only the villager brain: a player's own computer lending its GPU to a server. */
+    public synchronized void startBrainOnly() {
+        stop();
+        running = true;
+        startLlm();
+    }
+
     public synchronized void stop() {
         running = false;
         externalLlm = null;
@@ -103,10 +114,12 @@ public final class RuntimeManager {
         qwen.stop();
         qwenClone.stop();
         voice.stop();
+        planner.stop();
     }
 
     public synchronized void restartLlm() {
         llm.stop();
+        planner.stop();
         externalLlm = null;
         externalReady = false;
         startLlm();
@@ -266,7 +279,101 @@ public final class RuntimeManager {
         return false;
     }
 
-    /** Stops an idle on-demand voice designer. */
+    // ---- the planner model ------------------------------------------------------------------------------------
+
+    /** The planner model's file, when one other than the brain is set and installed. */
+    private Path plannerModel() {
+        String wanted = TwtConfig.PLANNER_MODEL.get().trim();
+        if (wanted.isEmpty()) {
+            return null;
+        }
+        Path p = runtimeDir.resolve("models").resolve("llm").resolve(wanted.endsWith(".gguf") ? wanted : wanted + ".gguf");
+        return Files.isRegularFile(p) && !p.getFileName().toString().equals(llmModelFile) ? p : null;
+    }
+
+    private static String plannerExternal() {
+        return TwtConfig.PLANNER_URL.get().trim().replaceAll("/+$", "");
+    }
+
+    /** Whether plans go to a model of their own rather than the villager brain. */
+    public boolean plannerSeparate() {
+        return !plannerExternal().isEmpty() || plannerModel() != null && Files.isRegularFile(llamaServer());
+    }
+
+    /** Whether plans can be made now: by the planner model (which starts when asked) or by the brain. */
+    public boolean plannerReady() {
+        return plannerSeparate() ? running && planner.state() != ManagedProcess.State.FAILED : llmReady();
+    }
+
+    /**
+     * Where planning requests go, starting the planner model first when it's idle (that takes a while: call it off the
+     * server thread). The brain when there's no planner model or it won't start.
+     */
+    public String plannerBaseUrl() {
+        String external = plannerExternal();
+        if (!external.isEmpty()) {
+            return external;
+        }
+        return plannerModel() != null && ensurePlanner() ? "http://127.0.0.1:" + plannerPort : llmBaseUrl();
+    }
+
+    public String plannerModelName() {
+        String external = plannerExternal();
+        if (!external.isEmpty()) {
+            return "external: " + external;
+        }
+        Path model = plannerModel();
+        return model == null ? null : model.getFileName().toString().replaceAll("\\.gguf$", "");
+    }
+
+    public ManagedProcess plannerProcess() {
+        return planner;
+    }
+
+    private boolean ensurePlanner() {
+        plannerUsedAt = System.currentTimeMillis();
+        if (planner.state() == ManagedProcess.State.READY) {
+            return true;
+        }
+        synchronized (this) {
+            if (!running) {
+                return false;
+            }
+            if (planner.state() != ManagedProcess.State.STARTING && planner.state() != ManagedProcess.State.READY) {
+                Path bin = llamaServer();
+                Path model = plannerModel();
+                if (!Files.isRegularFile(bin) || model == null) {
+                    return false;
+                }
+                plannerPort = freePort();
+                List<String> cmd = List.of(bin.toString(), "-m", model.toString(), "--host", "127.0.0.1", "--port", Integer.toString(plannerPort),
+                        "-ngl", Integer.toString(TwtConfig.GPU_LAYERS.get()), "-c", "8192", "-np", "1", "--jinja");
+                Map<String, String> env = bin.equals(llamaServer("llama")) ? libraryPath(bin.getParent(), cudaDir()) : libraryPath(bin.getParent());
+                TheyWillTalk.LOGGER.info("[planner] starting {}", model.getFileName());
+                planner.start(niced(cmd), env, bin.getParent(), health(plannerPort, "/health"), Duration.ofMinutes(5));
+            }
+        }
+        long deadline = System.currentTimeMillis() + 180_000;
+        while (System.currentTimeMillis() < deadline) {
+            ManagedProcess.State state = planner.state();
+            if (state == ManagedProcess.State.READY) {
+                plannerUsedAt = System.currentTimeMillis();
+                return true;
+            }
+            if (state == ManagedProcess.State.FAILED || state == ManagedProcess.State.STOPPED) {
+                return false;
+            }
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /** Stops an idle on-demand voice designer or planner. */
     private void reapDesigner(long generation) {
         while (running && generation == startGeneration) {
             try {
@@ -279,6 +386,11 @@ public final class RuntimeManager {
                         && System.currentTimeMillis() - designerUsedAt > DESIGNER_IDLE_MS) {
                     TheyWillTalk.LOGGER.info("[qwen-tts] voice designer idle, stopping it");
                     qwen.stop();
+                }
+                if (running && generation == startGeneration && planner.state() == ManagedProcess.State.READY
+                        && System.currentTimeMillis() - plannerUsedAt > TwtConfig.PLANNER_IDLE_MINUTES.get() * 60_000L) {
+                    TheyWillTalk.LOGGER.info("[planner] idle, stopping it");
+                    planner.stop();
                 }
             }
         }
@@ -666,6 +778,7 @@ public final class RuntimeManager {
                 active = installed && llm.state() == ManagedProcess.State.READY && runsBrain(pkg);
             }
             p.addProperty("active", active);
+            p.addProperty("planner", pkg.llmModel() != null && installed && pkg.llmModel().equals(plannerFile()));
             p.addProperty("recommended", recommended(pkg));
             p.addProperty("wrongGpu", !suitsGpu(pkg));
             p.addProperty("selectable", pkg.llmModel() != null || pkg.ttsEngine() != null);
@@ -696,6 +809,7 @@ public final class RuntimeManager {
         settings.addProperty("crudeLanguage", TwtConfig.CRUDE_LANGUAGE.get());
         settings.addProperty("bleepSwearing", TwtConfig.BLEEP_SWEARING.get());
         settings.addProperty("externalLlmUrl", TwtConfig.EXTERNAL_LLM_URL.get());
+        settings.addProperty("plannerModel", TwtConfig.PLANNER_MODEL.get());
         o.add("settings", settings);
         return o;
     }
@@ -755,6 +869,27 @@ public final class RuntimeManager {
         }
     }
 
+    /** The dashboard's "Use for planning" button; an empty id goes back to planning with the brain. */
+    public void usePlanner(String id) {
+        String file = "";
+        if (!id.isEmpty()) {
+            Package pkg = catalog.get(id).orElseThrow(() -> new IllegalArgumentException("unknown package " + id));
+            if (pkg.llmModel() == null || !installer.installed(pkg)) {
+                throw new IllegalStateException(pkg.name() + " isn't an installed language model");
+            }
+            file = pkg.llmModel();
+        }
+        TwtConfig.PLANNER_MODEL.set(file);
+        TwtConfig.PLANNER_MODEL.save();
+        TheyWillTalk.LOGGER.info("[planner] plans now come from {}", file.isEmpty() ? "the villager brain" : file);
+        planner.stop();
+    }
+
+    private static String plannerFile() {
+        String f = TwtConfig.PLANNER_MODEL.get().trim();
+        return f.isEmpty() || f.endsWith(".gguf") ? f : f + ".gguf";
+    }
+
     public void setTtsEngine(String engine) {
         String e = engine.trim().toLowerCase(Locale.ROOT);
         if (!List.of("auto", "qwen3", "kokoro", "supertonic").contains(e)) {
@@ -772,6 +907,7 @@ public final class RuntimeManager {
         boolean voices = pkg.group().equals("voices") || pkg.id().equals("qwentts-server") || pkg.id().equals("llm-runtime");
         if (brain) {
             llm.stop();
+            planner.stop();
         }
         if (voices) {
             qwen.stop();

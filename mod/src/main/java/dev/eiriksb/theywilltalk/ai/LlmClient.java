@@ -4,7 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.eiriksb.theywilltalk.TheyWillTalk;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -16,10 +17,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -27,8 +33,15 @@ import java.util.function.Supplier;
  * OpenAI-compatible chat client for the bundled llama-server. Requests run through a small priority queue with one
  * worker per llama.cpp slot, so a player waiting for an answer always goes before background work like memory
  * reflection or ambient villager chatter.
+ *
+ * <p>A player can lend their own GPU ({@link #lend}): requests about that player (their conversations) then go to it,
+ * and only those, because prompts hold what villagers remember about players. When the lent GPU drops out, its
+ * requests fall back to the server's own model.
  */
 public final class LlmClient {
+    /** TWT's logger, without loading the mod class (unit tests run without NeoForge). */
+    private static final Logger LOG = LoggerFactory.getLogger("TheyWillTalk");
+
     public enum Priority { CONVERSATION, GREETING, REFLECTION, PLANNING, AMBIENT }
 
     public record Message(String role, String content) {
@@ -39,8 +52,23 @@ public final class LlmClient {
 
     public record Result(String text, long firstTokenMs, long totalMs, int tokens) {}
 
+    /** One request as it goes to a model: what a lent GPU is sent. */
+    public record Request(List<Message> messages, double temperature, int maxTokens, JsonObject jsonSchema) {}
+
+    /** Somewhere else requests can run: a player's lent GPU. {@link #run} blocks on the backend's own threads. */
+    public interface Backend {
+        String name();
+
+        /** How many requests it takes at once. */
+        int slots();
+
+        Result run(Request request, Consumer<String> onDelta, BooleanSupplier cancelled) throws IOException, InterruptedException;
+    }
+
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     private final Supplier<String> baseUrl;
+    private final BooleanSupplier ready;
+    private final Map<UUID, Lane> lent = new ConcurrentHashMap<>();
     private final PriorityBlockingQueue<Job> queue = new PriorityBlockingQueue<>();
     private final AtomicLong seq = new AtomicLong();
     private final List<Thread> workers;
@@ -51,11 +79,19 @@ public final class LlmClient {
     // stats for the dashboard
     public final AtomicLong requests = new AtomicLong();
     public final AtomicLong tokensGenerated = new AtomicLong();
+    /** Requests answered by players' lent GPUs. */
+    public final AtomicLong lentRequests = new AtomicLong();
     public volatile long lastFirstTokenMs;
     public volatile double lastTokensPerSecond;
 
     public LlmClient(Supplier<String> baseUrl, int workers) {
+        this(baseUrl, () -> baseUrl.get() != null, workers);
+    }
+
+    /** {@code ready} says whether the model takes requests without asking {@code baseUrl}, which may start it. */
+    public LlmClient(Supplier<String> baseUrl, BooleanSupplier ready, int workers) {
         this.baseUrl = baseUrl;
+        this.ready = ready;
         this.workers = java.util.stream.IntStream.range(0, Math.max(1, workers))
                 .mapToObj(i -> Thread.ofPlatform().daemon().name("twt-llm-" + i).start(this::workLoop))
                 .toList();
@@ -64,6 +100,7 @@ public final class LlmClient {
     public void shutdown() {
         running = false;
         workers.forEach(Thread::interrupt);
+        List.copyOf(lent.keySet()).forEach(this::unlend);
         Job j;
         while ((j = queue.poll()) != null) {
             j.future.completeExceptionally(new IllegalStateException("shutting down"));
@@ -74,6 +111,41 @@ public final class LlmClient {
         return queue.size();
     }
 
+    /** Whether the server's own model takes requests. */
+    public boolean ready() {
+        return ready.getAsBoolean();
+    }
+
+    /** Whether requests about {@code player} can run: on the server's model or on the GPU they lend. */
+    public boolean readyFor(UUID player) {
+        return ready() || player != null && lent.containsKey(player);
+    }
+
+    /** From now on, requests about {@code player} run on {@code backend} (the GPU they lend). */
+    public void lend(UUID player, Backend backend) {
+        Lane old = lent.put(player, new Lane(backend));
+        if (old != null) {
+            old.close();
+        }
+        LOG.info("[llm] {} lends their GPU ({} at a time)", backend.name(), backend.slots());
+    }
+
+    /** {@code player} stopped lending: what was waiting for their GPU goes to the server's model. */
+    public void unlend(UUID player) {
+        Lane lane = lent.remove(player);
+        if (lane != null) {
+            lane.close();
+            LOG.info("[llm] {} stopped lending their GPU ({} requests answered)", lane.backend.name(), lane.answered.get());
+        }
+    }
+
+    /** Who lends their GPU right now, with how many requests each has answered. */
+    public List<String> lenders() {
+        List<String> out = new ArrayList<>();
+        lent.values().forEach(l -> out.add(l.backend.name() + " (" + l.answered.get() + " answered)"));
+        return out;
+    }
+
     /**
      * Streams a chat completion. {@code onDelta} is called on the worker thread with each text fragment.
      *
@@ -81,8 +153,15 @@ public final class LlmClient {
      */
     public CompletableFuture<Result> chat(Priority priority, List<Message> messages, double temperature, int maxTokens,
                                           JsonObject jsonSchema, Consumer<String> onDelta) {
+        return chat(priority, messages, temperature, maxTokens, jsonSchema, onDelta, null);
+    }
+
+    /** As above, for a request about {@code about} (a player): it runs on their lent GPU when they lend one. */
+    public CompletableFuture<Result> chat(Priority priority, List<Message> messages, double temperature, int maxTokens,
+                                          JsonObject jsonSchema, Consumer<String> onDelta, UUID about) {
         Job job = new Job(priority, seq.incrementAndGet(), messages, temperature, maxTokens, jsonSchema, onDelta);
-        queue.add(job);
+        Lane lane = about == null ? null : lent.get(about);
+        (lane != null ? lane.queue : queue).add(job);
         return job.future;
     }
 
@@ -184,9 +263,10 @@ public final class LlmClient {
                 text.append(piece);
                 if (job.onDelta != null) {
                     try {
+                        job.streamed = true;
                         job.onDelta.accept(piece);
                     } catch (Exception e) {
-                        TheyWillTalk.LOGGER.warn("LLM delta handler failed", e);
+                        LOG.warn("LLM delta handler failed", e);
                     }
                 }
             }
@@ -262,6 +342,74 @@ public final class LlmClient {
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
+    /** A lent GPU's own queue and workers. */
+    private final class Lane {
+        final Backend backend;
+        final PriorityBlockingQueue<Job> queue = new PriorityBlockingQueue<>();
+        final AtomicLong answered = new AtomicLong();
+        final List<Thread> threads;
+        volatile boolean open = true;
+
+        Lane(Backend backend) {
+            this.backend = backend;
+            this.threads = java.util.stream.IntStream.range(0, Math.max(1, backend.slots()))
+                    .mapToObj(i -> Thread.ofVirtual().name("twt-lent-" + i).start(this::work)).toList();
+        }
+
+        private void work() {
+            while (open) {
+                Job job;
+                try {
+                    job = queue.take();
+                } catch (InterruptedException e) {
+                    return;
+                }
+                if (job.future.isCancelled()) {
+                    continue;
+                }
+                try {
+                    Result r = backend.run(new Request(job.messages, job.temperature, job.maxTokens, job.jsonSchema), piece -> {
+                        if (job.onDelta != null && !piece.isEmpty()) {
+                            job.streamed = true;
+                            job.onDelta.accept(piece);
+                        }
+                    }, job.future::isCancelled);
+                    answered.incrementAndGet();
+                    lentRequests.incrementAndGet();
+                    requests.incrementAndGet();
+                    tokensGenerated.addAndGet(r.tokens());
+                    job.future.complete(r);
+                } catch (Throwable t) {
+                    if (!(t instanceof InterruptedException)) {
+                        LOG.debug("[llm] {}'s GPU failed a request: {}", backend.name(), t.toString());
+                    }
+                    fallBack(job, t);
+                }
+            }
+        }
+
+        void close() {
+            open = false;
+            threads.forEach(Thread::interrupt);
+            Job j;
+            while ((j = queue.poll()) != null) {
+                fallBack(j, new IOException(backend.name() + " stopped lending their GPU"));
+            }
+        }
+    }
+
+    /** A request a lent GPU couldn't answer goes to the server's model, unless part of its answer already went out. */
+    private void fallBack(Job job, Throwable why) {
+        if (job.future.isDone()) {
+            return;
+        }
+        if (!job.streamed && running && ready()) {
+            queue.add(job);
+        } else {
+            job.future.completeExceptionally(why);
+        }
+    }
+
     private static final class Job implements Comparable<Job> {
         final Priority priority;
         final long seq;
@@ -271,6 +419,8 @@ public final class LlmClient {
         final JsonObject jsonSchema;
         final Consumer<String> onDelta;
         final CompletableFuture<Result> future = new CompletableFuture<>();
+        /** Whether part of the answer already went out (so it can't be asked again elsewhere). */
+        volatile boolean streamed;
 
         Job(Priority priority, long seq, List<Message> messages, double temperature, int maxTokens, JsonObject jsonSchema,
             Consumer<String> onDelta) {
