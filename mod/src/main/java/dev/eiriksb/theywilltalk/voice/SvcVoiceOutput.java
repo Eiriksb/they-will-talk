@@ -7,20 +7,29 @@ import de.maxhenkel.voicechat.api.audiochannel.EntityAudioChannel;
 import de.maxhenkel.voicechat.api.opus.OpusEncoderMode;
 import dev.eiriksb.theywilltalk.TheyWillTalk;
 import dev.eiriksb.theywilltalk.audio.AudioDsp;
+import dev.eiriksb.theywilltalk.audio.FrameQueue;
 import dev.eiriksb.theywilltalk.audio.VoiceOutput;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /** Villager voices through Simple Voice Chat entity audio channels (positional, follows the villager). */
 final class SvcVoiceOutput implements VoiceOutput {
     static final String CATEGORY = "villagers";
     /** How long a stream keeps playing silence while waiting for the next sentence before giving up. */
     private static final int MAX_WAIT_FRAMES = 50 * 12;
+
+    private static final java.nio.file.Path DUMP = net.neoforged.fml.loading.FMLPaths.GAMEDIR.get().resolve("logs").resolve("theywilltalk").resolve("voice-dump");
+
+    private static short[] toShorts(byte[] b) {
+        short[] s = new short[b.length / 2];
+        for (int i = 0; i < s.length; i++) {
+            s[i] = (short) ((b[2 * i] & 0xFF) | (b[2 * i + 1] << 8));
+        }
+        return s;
+    }
 
     private final VoicechatServerApi api;
 
@@ -53,10 +62,8 @@ final class SvcVoiceOutput implements VoiceOutput {
     }
 
     private final class Stream implements SpeechStream {
-        private final ConcurrentLinkedQueue<short[]> frames = new ConcurrentLinkedQueue<>();
-        private final AtomicInteger queuedFrames = new AtomicInteger();
+        private final FrameQueue frames = new FrameQueue();
         private final AudioPlayer player;
-        private volatile boolean finished;
         private volatile boolean done;
         private int waited;
 
@@ -66,17 +73,33 @@ final class SvcVoiceOutput implements VoiceOutput {
             this.player.setOnStopped(() -> done = true);
         }
 
+        /** with a {@code logs/theywilltalk/voice-dump} folder (diagnosing sound): everything handed to Simple Voice Chat */
+        private final java.io.ByteArrayOutputStream dump = java.nio.file.Files.isDirectory(DUMP) ? new java.io.ByteArrayOutputStream() : null;
+
         private short[] next() {
             short[] f = frames.poll();
-            if (f != null) {
-                queuedFrames.decrementAndGet();
+            if (f == null && !frames.ended() && ++waited <= MAX_WAIT_FRAMES) {
+                f = new short[AudioDsp.FRAME]; // keep the stream open while the next sentence renders
+            } else if (f != null) {
                 waited = 0;
-                return f;
             }
-            if (finished || ++waited > MAX_WAIT_FRAMES) {
-                return null;
+            if (dump != null) {
+                if (f != null) {
+                    for (short v : f) {
+                        dump.write(v & 0xFF);
+                        dump.write((v >> 8) & 0xFF);
+                    }
+                } else if (dump.size() > 0) {
+                    try {
+                        java.nio.file.Files.write(DUMP.resolve(System.currentTimeMillis() + ".wav"),
+                                dev.eiriksb.theywilltalk.audio.Wav.encode(toShorts(dump.toByteArray()), AudioDsp.SVC_RATE));
+                    } catch (java.io.IOException e) {
+                        TheyWillTalk.LOGGER.warn("Couldn't save the voice dump", e);
+                    }
+                    dump.reset();
+                }
             }
-            return new short[AudioDsp.FRAME]; // keep the stream open while the next sentence renders
+            return f;
         }
 
         @Override
@@ -84,10 +107,7 @@ final class SvcVoiceOutput implements VoiceOutput {
             if (done) {
                 return;
             }
-            for (short[] f : AudioDsp.frames(pcm48k)) {
-                frames.add(f);
-                queuedFrames.incrementAndGet();
-            }
+            frames.push(pcm48k);
             if (!player.isStarted()) {
                 try {
                     player.startPlaying();
@@ -100,7 +120,7 @@ final class SvcVoiceOutput implements VoiceOutput {
 
         @Override
         public void finish() {
-            finished = true;
+            frames.finish();
             if (!player.isStarted()) {
                 done = true;
             }
@@ -108,9 +128,8 @@ final class SvcVoiceOutput implements VoiceOutput {
 
         @Override
         public void cancel() {
-            finished = true;
             frames.clear();
-            queuedFrames.set(0);
+            frames.finish();
             if (player.isStarted()) {
                 player.stopPlaying();
             }
@@ -124,7 +143,7 @@ final class SvcVoiceOutput implements VoiceOutput {
 
         @Override
         public long queuedMs() {
-            return queuedFrames.get() * 20L;
+            return frames.queued() * 20L;
         }
     }
 }
