@@ -20,7 +20,7 @@ LLM_URL="https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/resolve/main/gem
 KOKORO_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2"
 SUPERTONIC_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"
 QWENTTS_REPO="https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/main"
-QWENTTS_FILES=(qwen-talker-1.7b-voicedesign-Q4_K_M.gguf qwen-tokenizer-12hz-Q8_0.gguf)
+QWENTTS_FILES=(qwen-talker-1.7b-voicedesign-Q8_0.gguf qwen-tokenizer-12hz-BF16.gguf)
 
 dl() { # url target
   local url="$1" out="$2"

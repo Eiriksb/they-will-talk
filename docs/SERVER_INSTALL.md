@@ -46,10 +46,10 @@ No internet on the server? Build an offline bundle with `scripts/package.sh` and
 * **Bleep swear words** (on by default): swearing is bleeped YouTube style, `f***` in subtitles, caption bubbles and
   the map, and a beep in the voice. Turn it off to let villagers swear uncensored. Slurs are always censored.
 * **Voices:** Kokoro (54 voices on the CPU, the default), Supertonic (lighter), or Qwen3-TTS (expressive voices on
-  the GPU, about 2.5 GB of GPU memory; NVIDIA on Linux only for now). Add **Qwen3-TTS voice cloning** to keep each
+  the GPU, about 3.5 GB of GPU memory; NVIDIA on Linux only for now). Add **Qwen3-TTS voice cloning** to keep each
   villager's voice exactly the same in every line: their voice is designed once and saved with the world
   (`world/theywilltalk/voices/`), then every line and mood is spoken in it. With cloning, the VoiceDesign model only
-  runs while it designs new voices, so day to day the voices still need only about 2.5 GB of GPU memory.
+  runs while it designs new voices, so day to day the voices still need only about 3.5 GB of GPU memory.
 * **Your own voices:** with voice cloning installed, open a villager in the dashboard and use **Their voice**: upload a
   clip (5-20 seconds of one person speaking clearly, any audio format your browser plays) or record one with your
   microphone, add what is said in it for the closest match, and the villager speaks every line and mood in that voice.

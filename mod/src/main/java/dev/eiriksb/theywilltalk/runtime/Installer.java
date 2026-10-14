@@ -197,6 +197,9 @@ public final class Installer {
         for (String check : pkg.check()) {
             Files.deleteIfExists(path(check));
         }
+        for (String old : pkg.replaces()) {
+            Files.deleteIfExists(path(old));
+        }
         jobs.remove(id);
         TheyWillTalk.LOGGER.info("Removed {}", pkg.name());
     }
@@ -248,6 +251,9 @@ public final class Installer {
             int n = 0;
             for (FileSpec f : files) {
                 place(pkg, f, fetched.get(f), n++, job);
+            }
+            for (String old : pkg.replaces()) {
+                deleteQuietly(path(old)); // files of an earlier version of this package
             }
             job.phase = Phase.DONE;
             synchronized (this) {

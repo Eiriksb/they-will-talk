@@ -21,11 +21,14 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -232,7 +235,7 @@ public final class RuntimeManager {
         qwen.start(niced(cmd), libraryPath(bin.getParent(), cudaDir()), bin.getParent(), health(qwenPort, "/health"), Duration.ofMinutes(3));
     }
 
-    /** With voice cloning installed, VoiceDesign only runs while designing voices (saves about 1.5 GB of GPU memory). */
+    /** With voice cloning installed, VoiceDesign only runs while designing voices (saves about 3.5 GB of GPU memory). */
     public boolean designerOnDemand() {
         return qwenWanted() && qwenBaseModel() != null;
     }
@@ -499,10 +502,23 @@ public final class RuntimeManager {
             return files.filter(p -> {
                 String n = p.getFileName().toString();
                 return n.startsWith(prefix) && n.contains(contains) && n.endsWith(".gguf");
-            }).sorted().findFirst().orElse(null);
+            }).min(Comparator.comparingInt((Path p) -> -precision(p.getFileName().toString())).thenComparing(Comparator.naturalOrder()))
+                    .orElse(null);
         } catch (IOException e) {
             return null;
         }
+    }
+
+    private static final Pattern QUANT = Pattern.compile("[-_.]I?Q(\\d+)");
+
+    /** Higher for less quantized weights, so a leftover lower-precision file never wins over a newer one. */
+    static int precision(String fileName) {
+        String n = fileName.toUpperCase(Locale.ROOT);
+        if (n.contains("F32") || n.contains("F16")) {
+            return 16; // BF16, F16 and F32
+        }
+        Matcher q = QUANT.matcher(n);
+        return q.find() ? Integer.parseInt(q.group(1)) : 0;
     }
 
     private static boolean hasVoiceEngines(Path models) {

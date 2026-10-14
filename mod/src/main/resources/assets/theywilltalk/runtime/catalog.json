@@ -1,5 +1,5 @@
 {
-  "_comment": "Everything the dashboard can download. Compiled into the mod jar; every file is pinned to a revision and a SHA-256. Paths are relative to the runtime folder; {platform} is linux-x64 or windows-x64.",
+  "_comment": "Everything the dashboard can download. Compiled into the mod jar; every file is pinned to a revision and a SHA-256. Paths are relative to the runtime folder; {platform} is linux-x64 or windows-x64. \"replaces\" lists files of an earlier version of a package, deleted once it is installed.",
   "packages": [
     {
       "id": "llm-runtime",
@@ -259,24 +259,25 @@
       "id": "qwen3-tts",
       "group": "voices",
       "name": "Qwen3-TTS VoiceDesign",
-      "summary": "Expressive GPU voices: every villager gets a voice described in words and really acts out emotions. About 2.5 GB of GPU memory. Needs the Qwen3-TTS server.",
+      "summary": "Expressive GPU voices: every villager gets a voice described in words and really acts out emotions. About 3.5 GB of GPU memory. Needs the Qwen3-TTS server.",
       "licence": "Apache-2.0",
       "source": "huggingface.co/Serveurperso/Qwen3-TTS-GGUF",
       "requires": ["qwentts-server"],
       "ttsEngine": "qwen3",
-      "check": ["models/qwentts/qwen-talker-1.7b-voicedesign-Q4_K_M.gguf", "models/qwentts/qwen-tokenizer-12hz-Q8_0.gguf"],
+      "check": ["models/qwentts/qwen-talker-1.7b-voicedesign-Q8_0.gguf", "models/qwentts/qwen-tokenizer-12hz-BF16.gguf"],
+      "replaces": ["models/qwentts/qwen-talker-1.7b-voicedesign-Q4_K_M.gguf", "models/qwentts/qwen-tokenizer-12hz-Q8_0.gguf"],
       "platforms": {
         "any": [
           {
-            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-voicedesign-Q4_K_M.gguf",
-            "sha256": "7605ed0cc5e72059f27468c27f70c070e05d1cc0c7b1c76bfb9cba717a59eee3",
-            "size": 1182630816,
+            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-voicedesign-Q8_0.gguf",
+            "sha256": "575610ab1ddcca4dca6bd9a64bcd859d93bbad8764f9cab24e1dbc0c51f62276",
+            "size": 2042833824,
             "into": "models/qwentts"
           },
           {
-            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-tokenizer-12hz-Q8_0.gguf",
-            "sha256": "1883beeed99348fc35e23dd225e9082f93f6f8c109330a33d935baa8acdbfd94",
-            "size": 291150624,
+            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-tokenizer-12hz-BF16.gguf",
+            "sha256": "cc04d7352ff4cb339435cdccf59cf38e6e92f3cf789bc94a6a1b467093bafa18",
+            "size": 358980384,
             "into": "models/qwentts"
           }
         ]
@@ -286,17 +287,18 @@
       "id": "qwen3-tts-clone",
       "group": "voices",
       "name": "Qwen3-TTS voice cloning",
-      "summary": "Keeps every villager's Qwen3-TTS voice exactly the same from line to line: each voice is designed once, then every line and mood is spoken by the Base model cloning it. About 1.5 GB more GPU memory.",
+      "summary": "Keeps every villager's Qwen3-TTS voice exactly the same from line to line: each voice is designed once, then every line and mood is spoken by the Base model cloning it. Day to day it takes the voice designer's place (about 3.5 GB of GPU memory); both run while new voices are being designed.",
       "licence": "Apache-2.0",
       "source": "huggingface.co/Serveurperso/Qwen3-TTS-GGUF",
       "requires": ["qwen3-tts"],
-      "check": ["models/qwentts/qwen-talker-1.7b-base-Q4_K_M.gguf"],
+      "check": ["models/qwentts/qwen-talker-1.7b-base-Q8_0.gguf"],
+      "replaces": ["models/qwentts/qwen-talker-1.7b-base-Q4_K_M.gguf"],
       "platforms": {
         "any": [
           {
-            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-base-Q4_K_M.gguf",
-            "sha256": "ea393ebaf2167ea23ce9fc18b093822851358a950d7075cd47ab4f6ce23e887d",
-            "size": 1219245248,
+            "url": "https://huggingface.co/Serveurperso/Qwen3-TTS-GGUF/resolve/b7ee2e8c7459c3bea99da23e3d178125a7d1713c/qwen-talker-1.7b-base-Q8_0.gguf",
+            "sha256": "4b9a33a236908dd9435a42f7a396e38038329d053b704342a6413c08544c4fda",
+            "size": 2079448256,
             "into": "models/qwentts"
           }
         ]

@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  */
 public final class VoiceBank {
     /** Bump to redo every villager's clips (new scripts, new method). */
-    private static final String VERSION = "1";
+    private static final String VERSION = "2"; // 2: designed by the Q8 VoiceDesign model
     public static final double MIN_CLIP_SECONDS = 2;
     public static final double MAX_CLIP_SECONDS = 30;
 

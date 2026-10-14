@@ -51,7 +51,7 @@ public record Catalog(List<Package> packages) {
 
     public record Package(String id, String group, String name, String summary, String licence, String source,
                           List<String> tags, List<String> requires, List<String> check, String llmModel, String ttsEngine,
-                          String unavailable, Map<String, List<FileSpec>> platforms) {
+                          String unavailable, List<String> replaces, Map<String, List<FileSpec>> platforms) {
         public List<FileSpec> files(Platform platform) {
             List<FileSpec> files = platforms.get(platform.id);
             return files != null ? files : platforms.getOrDefault("any", List.of());
@@ -105,7 +105,7 @@ public record Catalog(List<Package> packages) {
             }
             packages.add(new Package(str(p, "id"), str(p, "group"), str(p, "name"), str(p, "summary"), str(p, "licence"),
                     str(p, "source"), strings(p, "tags"), strings(p, "requires"), strings(p, "check"), str(p, "llmModel"),
-                    str(p, "ttsEngine"), str(p, "unavailable"), platforms));
+                    str(p, "ttsEngine"), str(p, "unavailable"), strings(p, "replaces"), platforms));
         }
         return new Catalog(List.copyOf(packages));
     }

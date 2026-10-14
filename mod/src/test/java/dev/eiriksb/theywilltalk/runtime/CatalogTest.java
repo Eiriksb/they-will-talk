@@ -39,6 +39,22 @@ class CatalogTest {
     }
 
     @Test
+    void replacedFilesBelongToNoPackage() {
+        Set<String> current = new HashSet<>();
+        for (Catalog.Package p : catalog.packages()) {
+            current.addAll(p.check());
+            for (List<Catalog.FileSpec> files : p.platforms().values()) {
+                files.stream().filter(f -> f.into() != null && f.download()).forEach(f -> current.add(f.into() + "/" + f.fileName()));
+            }
+        }
+        for (Catalog.Package p : catalog.packages()) {
+            for (String old : p.replaces()) {
+                assertFalse(current.contains(old), p.id() + " would delete " + old + ", which is still in use");
+            }
+        }
+    }
+
+    @Test
     void theRecommendedSetupRunsOnLinuxAndWindows() {
         for (Platform platform : new Platform[]{Platform.LINUX_X64, Platform.WINDOWS_X64}) {
             assertTrue(catalog.get("llm-runtime").orElseThrow().available(platform), platform.id);
