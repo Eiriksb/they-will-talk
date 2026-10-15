@@ -104,7 +104,7 @@ public final class LendNet {
         PayloadRegistrar r = event.registrar("1").optional().executesOn(HandlerThread.NETWORK);
         r.playToClient(Welcome.TYPE, Welcome.CODEC, (p, ctx) -> {
             if (FMLEnvironment.dist.isClient()) {
-                LendClient.welcome(p);
+                LendClient.welcome(p, ctx.connection().getRemoteAddress());
             }
         });
         r.playToClient(Job.TYPE, Job.CODEC, (p, ctx) -> {

@@ -82,4 +82,18 @@ class ManagedProcessTest {
             other.destroyForcibly();
         }
     }
+
+    /** A program that crashes after running out of GPU memory says so, not just its exit code. */
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void runningOutOfGpuMemoryIsSaid(@TempDir Path dir) throws Exception {
+        ManagedProcess p = new ManagedProcess("cloner", dir.resolve("cloner.log"));
+        p.start(List.of("sh", "-c", "echo '[GGML] cudaMalloc failed: out of memory'; echo '[SpkExtract] Extracted'; exit 139"), Map.of(), dir,
+                URI.create("http://127.0.0.1:9/"), Duration.ofMinutes(1));
+        for (int i = 0; i < 100 && p.state() != ManagedProcess.State.FAILED; i++) {
+            Thread.sleep(50);
+        }
+        assertTrue(p.lastError() != null && p.lastError().contains("ran out of GPU memory") && p.lastError().contains("cudaMalloc"),
+                "said: " + p.lastError());
+    }
 }

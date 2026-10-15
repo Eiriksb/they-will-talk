@@ -53,7 +53,11 @@ public final class LendClient {
         }, "twt-lend-shutdown"));
     }
 
-    static void welcome(LendNet.Welcome w) {
+    /** where the server we're on is (from its welcome) */
+    private static volatile java.net.SocketAddress serverAddress;
+
+    static void welcome(LendNet.Welcome w, java.net.SocketAddress from) {
+        serverAddress = from;
         Minecraft mc = Minecraft.getInstance();
         if (mc.isLocalServer()) {
             return; // singleplayer already thinks on this computer
@@ -80,8 +84,14 @@ public final class LendClient {
             return;
         }
         runtime = rt;
-        tell("Starting the villager AI on your GPU...");
         Thread.ofVirtual().name("twt-lend-start").start(() -> {
+            if (onThisComputer()) {
+                // its own model already runs on this GPU: a second copy only crowds out the voices
+                tell("The server runs on this computer and already thinks on its GPU, so it isn't lent to it as well.");
+                stop(false);
+                return;
+            }
+            tell("Starting the villager AI on your GPU...");
             rt.startBrainOnly();
             long deadline = System.currentTimeMillis() + 5 * 60_000;
             while (runtime == rt && !rt.llmReady() && System.currentTimeMillis() < deadline) {
@@ -106,6 +116,27 @@ public final class LendClient {
                 TheyWillTalk.LOGGER.info("[lend] lending {} to the server", rt.llmModelName());
             }
         });
+    }
+
+    /** Whether the server we're on runs on this computer (a dedicated server started here, or one on this machine's LAN address). */
+    static boolean onThisComputer() {
+        Minecraft mc = Minecraft.getInstance();
+        java.net.InetAddress a = null;
+        var connection = mc.getConnection();
+        java.net.SocketAddress remote = connection != null ? connection.getConnection().getRemoteAddress() : serverAddress;
+        if (remote instanceof java.net.InetSocketAddress address) {
+            a = address.getAddress();
+        }
+        try {
+            if (a == null && mc.getCurrentServer() != null) { // the address being joined (looked up again, off the render thread)
+                a = java.net.InetAddress.getByName(net.minecraft.client.multiplayer.resolver.ServerAddress.parseString(mc.getCurrentServer().ip).getHost());
+            }
+            boolean here = a != null && (a.isLoopbackAddress() || a.isAnyLocalAddress() || java.net.NetworkInterface.getByInetAddress(a) != null);
+            TheyWillTalk.LOGGER.info("[lend] the server is at {}{}", a, here ? ", on this computer" : "");
+            return here;
+        } catch (java.io.IOException | RuntimeException e) {
+            return false;
+        }
     }
 
     private static synchronized void stop(boolean tellServer) {

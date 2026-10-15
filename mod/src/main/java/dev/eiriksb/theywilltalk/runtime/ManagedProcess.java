@@ -162,7 +162,10 @@ public final class ManagedProcess {
         }
         boolean wasReady = state == State.READY;
         String last = lastLogLine();
-        fail("exited with code " + p.exitValue() + (last.isEmpty() ? "" : ": " + last));
+        String oom = tailLog(40).stream().filter(l -> l.toLowerCase(java.util.Locale.ROOT).contains("out of memory")).reduce((a, b) -> b).orElse(null);
+        fail(oom != null ? "ran out of GPU memory (exited with code " + p.exitValue() + "): " + oom.trim()
+                + ". Other programs on the GPU (another AI model, a game, a 3D editor) leave it too little room."
+                : "exited with code " + p.exitValue() + (last.isEmpty() ? "" : ": " + last));
         if (wasReady && restarts < MAX_RESTARTS) {
             restarts++;
             long delay = 5_000L * restarts;

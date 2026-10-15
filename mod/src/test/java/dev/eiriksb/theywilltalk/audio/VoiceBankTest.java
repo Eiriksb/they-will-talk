@@ -101,6 +101,22 @@ class VoiceBankTest {
         assertEquals(2, designer.speech.size(), "without the clip the voice is designed again");
     }
 
+    /** Once the voice is designed (before the cloner takes it in), the designer is told it can go. */
+    @Test
+    void theDesignerIsLetGoOnceTheVoiceIsDesigned() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger done = new java.util.concurrent.atomic.AtomicInteger();
+        int[] registeredThen = {-1};
+        VoiceBank bank = new VoiceBank(tmp, new QwenTtsClient(designer::url), new QwenTtsClient(cloner::url), () -> true, () -> {
+            done.incrementAndGet();
+            registeredThen[0] = cloner.voices.size();
+        });
+        bank.voice(VILLAGER, "An old farmer", 42, "neutral");
+        assertEquals(1, done.get(), "told once");
+        assertEquals(0, registeredThen[0], "before the cloner takes the voice in");
+        bank.voice(VILLAGER, "An old farmer", 42, "happy");
+        assertEquals(1, done.get(), "nothing designed for a mood: not told again");
+    }
+
     @Test
     void clipsMustBeWavFilesOfAFewSeconds() {
         VoiceBank bank = bank();

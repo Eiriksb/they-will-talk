@@ -76,6 +76,9 @@ public final class VoiceBank {
     private final QwenTtsClient designer;
     private final QwenTtsClient cloner;
     private final BooleanSupplier designerReady;
+    private final Runnable designerDone;
+    /** voices being designed right now */
+    private final java.util.concurrent.atomic.AtomicInteger designing = new java.util.concurrent.atomic.AtomicInteger();
     private final Map<UUID, Object> locks = new ConcurrentHashMap<>();
     private final Set<String> registered = ConcurrentHashMap.newKeySet();
     private volatile String registeredOn;
@@ -84,12 +87,19 @@ public final class VoiceBank {
      * @param designer      the VoiceDesign server, which invents voices from descriptions
      * @param cloner        the Base server, which speaks in registered (cloned) voices
      * @param designerReady starts the designer when it's idle (it only runs while needed); false if it can't
+     * @param designerDone  no voice is being designed any more: the designer may go (the cloner needs room next, to take
+     *                      in the voice just designed)
      */
-    public VoiceBank(Path dir, QwenTtsClient designer, QwenTtsClient cloner, BooleanSupplier designerReady) {
+    public VoiceBank(Path dir, QwenTtsClient designer, QwenTtsClient cloner, BooleanSupplier designerReady, Runnable designerDone) {
         this.dir = dir;
         this.designer = designer;
         this.cloner = cloner;
         this.designerReady = designerReady;
+        this.designerDone = designerDone;
+    }
+
+    public VoiceBank(Path dir, QwenTtsClient designer, QwenTtsClient cloner, BooleanSupplier designerReady) {
+        this(dir, designer, cloner, designerReady, () -> {});
     }
 
     /** The voice cloner runs, so lines can be cloned (the designer is started when a new voice is needed). */
@@ -138,10 +148,17 @@ public final class VoiceBank {
                 if (custom != null) {
                     Files.copy(custom.wav(), neutral);
                 } else {
-                    if (!designerReady.getAsBoolean()) {
-                        throw new IOException("the Qwen3-TTS voice designer isn't available");
+                    designing.incrementAndGet();
+                    try {
+                        if (!designerReady.getAsBoolean()) {
+                            throw new IOException("the Qwen3-TTS voice designer isn't available");
+                        }
+                        write(neutral, designer.wav(Mood.NEUTRAL.script, VoiceDesign.forLine(design, "neutral"), null, seed));
+                    } finally {
+                        if (designing.decrementAndGet() == 0) {
+                            designerDone.run();
+                        }
                     }
-                    write(neutral, designer.wav(Mood.NEUTRAL.script, VoiceDesign.forLine(design, "neutral"), null, seed));
                 }
             }
             // Without a transcript an uploaded clip can only lend its timbre, not be continued from.

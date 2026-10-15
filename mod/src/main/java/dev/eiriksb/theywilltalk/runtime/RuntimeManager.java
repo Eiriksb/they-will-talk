@@ -282,6 +282,31 @@ public final class RuntimeManager {
         return false;
     }
 
+    /**
+     * The GPU memory (MB) the voice cloner wants free once a voice is designed: taking in the new voice loads its encoder
+     * (about 250 MB) on top of what it's using, and running out crashes it.
+     */
+    static final int CLONER_HEADROOM_MB = 1500;
+
+    /**
+     * No voice is being designed any more: when the GPU is short of room for the cloner to take in the new voice, the
+     * designer goes now instead of after {@link #DESIGNER_IDLE_MS} (it starts again in a second or two when needed).
+     */
+    public void designerDone() {
+        List<GpuInfo.Gpu> gpus = GpuInfo.query();
+        if (gpus.isEmpty()) {
+            return;
+        }
+        GpuInfo.Gpu g = gpus.getFirst();
+        int free = g.memoryTotalMb() - g.memoryUsedMb();
+        synchronized (this) {
+            if (designerOnDemand() && qwen.state() == ManagedProcess.State.READY && free < CLONER_HEADROOM_MB) {
+                TheyWillTalk.LOGGER.info("[qwen-tts] voice designed; stopping the designer to give the cloner room ({} MB free)", free);
+                qwen.stop();
+            }
+        }
+    }
+
     // ---- the planner model ------------------------------------------------------------------------------------
 
     /** The planner model's file, when one other than the brain is set and installed. */
