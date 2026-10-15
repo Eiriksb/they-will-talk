@@ -25,9 +25,10 @@ public interface TheyWillTalkApi {
     /**
      * 1: kinds, adapters, prompt contributors, conversation hooks. 2: {@link #canTalk}. 3: {@link #memory}, reflection
      * fields. 4: {@link #llm}, {@link #speak}, {@link #profile}. 5: {@link #talk}, {@link #history}, and voice designs from
-     * adapters ({@code VillagerFacts.voiceDesign}, {@code voicePitch}, {@code voiceSpeed}).
+     * adapters ({@code VillagerFacts.voiceDesign}, {@code voicePitch}, {@code voiceSpeed}). 6: the planner model and lent GPUs ({@code LlmApi.planner},
+     * {@code forPlayer}, {@code readyFor}, {@code backlog}). 7: {@link ConversationHook#spoke}.
      */
-    int VERSION = 6;
+    int VERSION = 7;
 
     static TheyWillTalkApi get() {
         return TwtApi.INSTANCE;
