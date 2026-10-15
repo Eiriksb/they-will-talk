@@ -609,10 +609,12 @@ public final class ConversationManager {
                 session.turnsSinceChime++;
             }
             if (!turn.cancelled && !fullReply.isEmpty()) {
+                String felt = ss.emotion();
                 server.execute(() -> {
                     Entity v = turn.villager.get();
                     if (v != null) {
                         subtitle(v, profile, turn.facts.kind, fullReply);
+                        TwtApi.INSTANCE.spoke(v.getUUID(), fullReply, felt);
                     }
                 });
             }
@@ -872,6 +874,7 @@ public final class ConversationManager {
                 Gestures.react(who, kind, l.emotion());
                 subtitle(who, l.profile(), kind, l.text());
                 bubble(who, lang, l.text(), range);
+                TwtApi.INSTANCE.spoke(who.getUUID(), l.text(), l.emotion());
             });
             if (pcm != null) {
                 VoiceOutput.SpeechStream stream = out.open(who, (float) range);
@@ -1346,6 +1349,7 @@ public final class ConversationManager {
                         Gestures.react(who, facts.kind, emotion);
                         subtitle(who, prof, facts.kind, text);
                         bubble(who, Languages.ENGLISH, text, TwtConfig.VOICE_DISTANCE.get() * 0.75);
+                        TwtApi.INSTANCE.spoke(who.getUUID(), text, emotion);
                     });
                     Thread.sleep(Math.max(1200, playMs + 350));
                 }

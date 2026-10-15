@@ -263,6 +263,17 @@ public final class TwtApi implements TheyWillTalkApi {
         return handled;
     }
 
+    /** Server thread. */
+    public void spoke(java.util.UUID villager, String text, String emotion) {
+        for (ConversationHook h : hooks) {
+            try {
+                h.spoke(villager, text, emotion);
+            } catch (Throwable t) {
+                TheyWillTalk.LOGGER.warn("Conversation hook {} failed: {}", h.getClass().getName(), t.toString());
+            }
+        }
+    }
+
     /** Background thread. */
     public void afterReply(TurnInfo turn, String reply, String emotion) {
         for (ConversationHook h : hooks) {
